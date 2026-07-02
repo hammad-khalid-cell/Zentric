@@ -1,10 +1,9 @@
 from datetime import date, timedelta
 
-# Dummy in-memory parcel database.
-# tracking_number -> parcel details
 PARCELS = {
     "TRK12345": {
         "tracking_number": "TRK12345",
+        "customer_phone": "923001234567",
         "status": "in_transit",
         "current_hub": "Lahore Sorting Facility",
         "destination_city": "Karachi",
@@ -13,6 +12,7 @@ PARCELS = {
     },
     "TRK67890": {
         "tracking_number": "TRK67890",
+        "customer_phone": "923001234567",
         "status": "out_for_delivery",
         "current_hub": "Karachi Local Hub",
         "destination_city": "Karachi",
@@ -21,17 +21,23 @@ PARCELS = {
     },
     "TRK99999": {
         "tracking_number": "TRK99999",
+        "customer_phone": "923009999999",
         "status": "in_transit",
         "current_hub": "Multan Sorting Facility",
         "destination_city": "Islamabad",
         "dispatch_date": date.today() - timedelta(days=6),
-        "expected_delivery_date": date.today() - timedelta(days=1),  # already overdue -> delayed
+        "expected_delivery_date": date.today() - timedelta(days=1),
     },
 }
 
 
 def find_parcel(tracking_number: str):
     return PARCELS.get(tracking_number.upper())
+
+
+def find_parcels_by_phone(phone_number: str) -> list[dict]:
+    """Returns all parcels linked to a given WhatsApp number."""
+    return [p for p in PARCELS.values() if p["customer_phone"] == phone_number]
 
 def get_shipment_status(tracking_number: str) -> dict:
     parcel = find_parcel(tracking_number)

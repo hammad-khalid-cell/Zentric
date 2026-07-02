@@ -6,6 +6,7 @@ class AgentState(TypedDict):
     user_message: str
     customer_id: str
 
+
     # Set by Intent Understanding Agent
     intent: Optional[Literal[
         "track_order", "delay_complaint", "faq", "unclear"
@@ -25,6 +26,9 @@ class AgentState(TypedDict):
 
     # Set by Response Generation Agent
     final_response: Optional[str]
+
+       # NEW — set when we can't resolve a parcel and need to ask the customer
+    clarification_needed: Optional[str]
 
     # Escalation
     needs_human_handoff: bool

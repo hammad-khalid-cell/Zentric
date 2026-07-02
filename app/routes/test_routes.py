@@ -7,6 +7,7 @@ router = APIRouter()
 
 
 class MessageRequest(BaseModel):
+    from_number: str   # simulates WhatsApp's "from" field
     message: str
 
 
