@@ -3,6 +3,7 @@ import json
 from app.core.groq_client import client
 from app.graph.state import AgentState
 from app.services.parcel_data import find_parcel, find_parcels_by_phone
+from datetime import date
 
 # --- Intent Understanding Agent ---
 
@@ -132,5 +133,67 @@ def data_retrieval_node(state: AgentState) -> AgentState:
             f"You have {len(matches)} active parcels: {tracking_list}. "
             "Which one would you like to check?"
         )
+
+    return state
+
+# --- Decision Making Agent ---
+REASON_TO_DECISION = {
+    "customer_unavailable": "notify",
+    "incorrect_address": "notify",
+    "consignee_requested_reschedule": "notify",
+    "weather_delay": "notify",
+    "vehicle_breakdown": "reroute",
+    "operational_delay": "reroute",
+    "linehaul_delay": "reroute",
+    "shipment_damaged": "escalate",
+    "security_restrictions": "escalate",
+    "payment_issue_cod": "escalate",
+}
+
+
+def decision_making_node(state: AgentState) -> AgentState:
+    if state.get("intent") != "delay_complaint":
+        return state
+
+    parcel = state.get("retrieved_data")
+    if not parcel:
+        return state
+
+    is_delayed = parcel["expected_delivery_date"] < date.today() and parcel["status"] != "delivered"
+
+    if not is_delayed:
+        state["decision"] = "no_action"
+        state["decision_reason"] = "Parcel is on track, not actually delayed."
+        return state
+
+    reason_code = parcel.get("delay_reason")
+    decision = REASON_TO_DECISION.get(reason_code, "escalate")  # unknown reason -> safe default
+
+    # LLM only writes the human-facing explanation, doesn't decide the action
+    system_prompt = (
+        "You are a logistics assistant. Given a parcel's delay reason and the "
+        "action already decided, write ONE short, natural sentence explaining "
+        "the situation to a support agent. Do not repeat raw codes verbatim."
+    )
+    user_prompt = (
+        f"Delay reason: {reason_code or 'unknown'}\n"
+        f"Decision made: {decision}\n"
+        f"Days overdue: {(date.today() - parcel['expected_delivery_date']).days}"
+    )
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0,
+    )
+
+    state["decision"] = decision
+    state["decision_reason"] = response.choices[0].message.content.strip()
+
+    if decision == "escalate":
+        state["needs_human_handoff"] = True
 
     return state
