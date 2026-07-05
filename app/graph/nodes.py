@@ -1,6 +1,7 @@
 import re
 import json
 from app.core.groq_client import client
+from app.graph import state
 from app.graph.state import AgentState
 from app.services.parcel_data import find_parcel, find_parcels_by_phone
 from app.services.action_service import create_ticket, create_reroute_request
@@ -234,4 +235,76 @@ def action_execution_node(state: AgentState) -> AgentState:
         state["action_taken"] = None
         state["action_result"] = None
 
+    return state
+
+
+# --- Response Generation Agent ---
+
+def response_generation_node(state: AgentState) -> AgentState:
+    # Case 1: clarification needed (no parcel resolved yet)
+    if state.get("clarification_needed"):
+        base_message = state["clarification_needed"]
+    else:
+        base_message = None
+
+    system_prompt = (
+    "You are a professional WhatsApp customer support assistant for a Pakistani "
+    "courier company. CRITICAL RULE: You must reply in the exact same language "
+    "as the customer's message below. If the customer wrote in plain English, "
+    "your ENTIRE reply must be in English — do not use Roman Urdu words at all. "
+    "If the customer wrote in Roman Urdu or mixed it with English, mirror that "
+    "same mix — but keep it professional and courteous, like a real company "
+    "support agent, not a casual friend. Avoid overly casual slang such as "
+    "'yar', 'bro', or similar. Keep it short (1-3 sentences), warm but "
+    "professional, and WhatsApp-appropriate — no formal letter tone, no markdown."
+    )
+
+    context_parts = [f"Customer's original message: {state['user_message']}"]
+
+    if base_message:
+        context_parts.append(f"Situation to convey: {base_message}")
+
+    elif state.get("intent") == "track_order":
+        parcel = state.get("retrieved_data")
+        context_parts.append(
+            f"Parcel status: {parcel['status']}, currently at {parcel['current_hub']}, "
+            f"expected delivery: {parcel['expected_delivery_date']}."
+        )
+
+    elif state.get("intent") == "delay_complaint":
+        parcel = state.get("retrieved_data")
+        decision = state.get("decision")
+        action_result = state.get("action_result")
+
+        context_parts.append(f"Delay reason: {parcel.get('delay_reason') or 'unknown'}")
+        context_parts.append(f"Decision: {decision}")
+
+        if decision == "escalate" and action_result:
+            context_parts.append(
+                f"A support ticket has been raised (reference: {action_result['ticket_id']}). "
+                "Reassure them a human will follow up."
+            )
+        elif decision == "reroute" and action_result:
+            context_parts.append(
+                f"A reroute has been requested (reference: {action_result['reroute_id']}). "
+                "Reassure them this is being handled."
+            )
+        elif decision == "no_action":
+            context_parts.append("Parcel is actually on track, not delayed — reassure them.")
+
+    else:
+        context_parts.append("Respond helpfully based on the message alone.")
+
+    user_prompt = "\n".join(context_parts)
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.3,
+    )
+
+    state["final_response"] = response.choices[0].message.content.strip()
     return state
