@@ -3,6 +3,7 @@ import json
 from app.core.groq_client import client
 from app.graph.state import AgentState
 from app.services.parcel_data import find_parcel, find_parcels_by_phone
+from app.services.action_service import create_ticket, create_reroute_request
 from datetime import date
 
 # --- Intent Understanding Agent ---
@@ -195,5 +196,42 @@ def decision_making_node(state: AgentState) -> AgentState:
 
     if decision == "escalate":
         state["needs_human_handoff"] = True
+
+    return state
+
+
+
+# --- Action Execution Agent ---
+
+def action_execution_node(state: AgentState) -> AgentState:
+    decision = state.get("decision")
+    parcel = state.get("retrieved_data")
+
+    if not parcel:
+        state["action_taken"] = None
+        state["action_result"] = None
+        return state
+
+    if decision == "escalate":
+        result = create_ticket(
+            tracking_number=parcel["tracking_number"],
+            reason=parcel.get("delay_reason"),
+            decision=decision,
+        )
+        state["action_taken"] = "ticket_created"
+        state["action_result"] = result
+
+    elif decision == "reroute":
+        result = create_reroute_request(
+            tracking_number=parcel["tracking_number"],
+            reason=parcel.get("delay_reason"),
+        )
+        state["action_taken"] = "reroute_requested"
+        state["action_result"] = result
+
+    else:
+        # notify / no_action — nothing to execute
+        state["action_taken"] = None
+        state["action_result"] = None
 
     return state
