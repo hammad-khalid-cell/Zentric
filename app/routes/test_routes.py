@@ -1,27 +1,30 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
-from app.agents.router_agent import classify_message
-from app.agents.tracking_agent import run_tracking_agent
+from app.graph.build_graph import compiled_graph
 
 router = APIRouter()
 
 
 class MessageRequest(BaseModel):
-    from_number: str   # simulates WhatsApp's "from" field
+    from_number: str
     message: str
 
 
 @router.post("/test/message")
 def test_message(payload: MessageRequest):
-    category = classify_message(payload.message)
+    initial_state = {
+        "user_message": payload.message,
+        "customer_id": payload.from_number,
+    }
 
-    if category == "tracking_query":
-        reply = run_tracking_agent(payload.message)
-    else:
-        reply = f"[{category} handling not built yet]"
+    result = compiled_graph.invoke(initial_state)
 
     return {
         "message": payload.message,
-        "classified_as": category,
-        "reply": reply,
+        "intent": result.get("intent"),
+        "clarification_needed": result.get("clarification_needed"),
+        "decision": result.get("decision"),
+        "action_result": result.get("action_result"),
+        "needs_human_handoff": result.get("needs_human_handoff", False),
+        "reply": result.get("final_response"),
     }
