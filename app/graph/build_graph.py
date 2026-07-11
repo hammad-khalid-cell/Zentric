@@ -6,6 +6,8 @@ from app.graph.nodes import (
     decision_making_node,
     action_execution_node,
     response_generation_node,
+    memory_load_node,
+    memory_save_node
 )
 
 
@@ -22,17 +24,20 @@ def route_after_retrieval(state: AgentState) -> str:
         return "decision_making"
     return "response_generation"
 
-
 def build_graph():
     graph = StateGraph(AgentState)
 
+    graph.add_node("memory_load", memory_load_node)
     graph.add_node("intent_understanding", intent_understanding_node)
     graph.add_node("data_retrieval", data_retrieval_node)
     graph.add_node("decision_making", decision_making_node)
     graph.add_node("action_execution", action_execution_node)
     graph.add_node("response_generation", response_generation_node)
+    graph.add_node("memory_save", memory_save_node)
 
-    graph.set_entry_point("intent_understanding")
+    graph.set_entry_point("memory_load")
+
+    graph.add_edge("memory_load", "intent_understanding")
 
     graph.add_conditional_edges(
         "intent_understanding",
@@ -54,7 +59,8 @@ def build_graph():
 
     graph.add_edge("decision_making", "action_execution")
     graph.add_edge("action_execution", "response_generation")
-    graph.add_edge("response_generation", END)
+    graph.add_edge("response_generation", "memory_save")
+    graph.add_edge("memory_save", END)
 
     return graph.compile()
 

@@ -32,3 +32,8 @@ class AgentState(TypedDict):
 
     # Escalation
     needs_human_handoff: bool
+
+
+    # NEW — memory/context
+    pending_clarification: Optional[dict]   # what we're waiting on the customer to answer
+    session_loaded: Optional[bool] 

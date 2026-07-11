@@ -6,6 +6,8 @@ from app.graph.state import AgentState
 from app.services.parcel_data import find_parcel, find_parcels_by_phone
 from app.services.action_service import create_ticket, create_reroute_request
 from datetime import date
+from app.core.memory_store import get_session, save_session
+
 
 # --- Intent Understanding Agent ---
 
@@ -70,8 +72,19 @@ def llm_intent(message: str) -> str:
     return result if result in valid else "unclear"
 
 
+
 def intent_understanding_node(state: AgentState) -> AgentState:
     message = state["user_message"]
+
+    # If we were waiting on a clarification reply, treat this as a continuation
+    if state.get("pending_clarification"):
+        tracking_number = extract_tracking_number(message)
+        if tracking_number:
+            state["intent"] = "track_order"
+            state["tracking_number"] = tracking_number
+            return state
+        # No tracking number found in a clarification reply — still unclear,
+        # fall through to normal classification as a safe default
 
     intent = rule_based_intent(message)
     if not intent:
@@ -82,6 +95,8 @@ def intent_understanding_node(state: AgentState) -> AgentState:
     state["intent"] = intent
     state["tracking_number"] = tracking_number
     return state
+
+
 
 from app.services.parcel_data import find_parcel, find_parcels_by_phone
 
@@ -307,4 +322,33 @@ def response_generation_node(state: AgentState) -> AgentState:
     )
 
     state["final_response"] = response.choices[0].message.content.strip()
+    return state
+
+from app.core.memory_store import get_session, save_session
+
+# --- Memory & Context Agent ---
+
+def memory_load_node(state: AgentState) -> AgentState:
+    session = get_session(state["customer_id"])
+    if session:
+        state["pending_clarification"] = session.get("pending_clarification")
+    else:
+        state["pending_clarification"] = None
+    state["session_loaded"] = True
+    return state
+
+
+def memory_save_node(state: AgentState) -> AgentState:
+    if state.get("clarification_needed"):
+        # We're now waiting on the customer — remember what we asked
+        parcel = state.get("retrieved_data")
+        pending = {
+            "type": "clarification",
+            "last_message": state["user_message"],
+        }
+        save_session(state["customer_id"], {"pending_clarification": pending})
+    else:
+        # Resolved — clear any pending clarification
+        save_session(state["customer_id"], {"pending_clarification": None})
+
     return state
