@@ -37,3 +37,5 @@ class AgentState(TypedDict):
     # NEW — memory/context
     pending_clarification: Optional[dict]   # what we're waiting on the customer to answer
     session_loaded: Optional[bool] 
+
+    escalation_reason: Optional[str]

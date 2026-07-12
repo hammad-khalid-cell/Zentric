@@ -8,7 +8,8 @@ from app.graph.nodes import (
     response_generation_node,
     memory_load_node,
     memory_save_node,
-    faq_node
+    faq_node,
+    escalation_check_node
 )
 
 
@@ -34,6 +35,7 @@ def build_graph():
 
     graph.add_node("memory_load", memory_load_node)
     graph.add_node("intent_understanding", intent_understanding_node)
+    graph.add_node("escalation_check", escalation_check_node)
     graph.add_node("data_retrieval", data_retrieval_node)
     graph.add_node("decision_making", decision_making_node)
     graph.add_node("action_execution", action_execution_node)
@@ -43,9 +45,12 @@ def build_graph():
 
     graph.set_entry_point("memory_load")
     graph.add_edge("memory_load", "intent_understanding")
+    graph.add_edge("memory_load", "intent_understanding")
+    graph.add_edge("intent_understanding", "escalation_check")
 
+    
     graph.add_conditional_edges(
-        "intent_understanding",
+        "escalation_check",
         route_after_intent,
         {
             "data_retrieval": "data_retrieval",

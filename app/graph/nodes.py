@@ -2,6 +2,7 @@ import re
 import json
 from app.core.groq_client import client
 from app.graph import state
+from typing import Optional
 from app.graph.state import AgentState
 from app.services.parcel_data import find_parcel, find_parcels_by_phone
 from app.services.action_service import create_ticket, create_reroute_request
@@ -53,7 +54,7 @@ def rule_based_intent(message: str) -> str | None:
 
     return None
 
-    
+
 def llm_intent(message: str) -> str:
     system_prompt = (
         "You are an intent classifier for a logistics customer support system. "
@@ -282,6 +283,11 @@ def response_generation_node(state: AgentState) -> AgentState:
     "professional, and WhatsApp-appropriate — no formal letter tone, no markdown."
     )
 
+    if state.get("needs_human_handoff") and state.get("escalation_reason") in {"explicit_human_request", "repeated_query", "tone_detected"}:
+        context_parts_prefix = "Note: this customer seems frustrated or has asked for a human — acknowledge this warmly and reassure them a team member will follow up, in addition to answering their actual question."
+    else:
+        context_parts_prefix = None 
+
     context_parts = [f"Customer's original message: {state['user_message']}"]
 
     if base_message:
@@ -371,4 +377,80 @@ def faq_node(state: AgentState) -> AgentState:
 
     reply = run_faq_agent(state["user_message"])
     state["final_response"] = reply
+    return state
+
+# --- Escalation / Frustration Detection ---
+
+HUMAN_REQUEST_KEYWORDS = [
+    "talk to a person", "talk to a human", "real person", "human please",
+    "connect me to an agent", "speak to someone", "call me",
+    "banda", "insaan", "agent se baat", "customer se baat"
+]
+
+FRUSTRATION_KEYWORDS = [
+    "ridiculous", "unacceptable", "worst service", "useless", "fed up",
+    "bakwas", "faltu", "bohot bura", "ghatiya"
+]
+
+
+def rule_based_frustration_check(message: str, repeat_count: int) -> Optional[str]:
+    text = message.lower()
+
+    if _contains_keyword(text, HUMAN_REQUEST_KEYWORDS):
+        return "explicit_human_request"
+
+    if repeat_count >= 3:
+        return "repeated_query"
+
+    if _contains_keyword(text, FRUSTRATION_KEYWORDS):
+        return "angry_language"
+
+    return None
+
+
+def llm_frustration_check(message: str) -> bool:
+    system_prompt = (
+        "You are analyzing a customer support message for signs of frustration "
+        "or anger — not just negative topics (a delay complaint alone is not "
+        "frustration), but the CUSTOMER'S TONE (sarcasm, exasperation, anger, "
+        "repeated emphasis). Respond with ONLY 'yes' or 'no'."
+    )
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": message},
+        ],
+        temperature=0,
+    )
+    return response.choices[0].message.content.strip().lower().startswith("yes")
+
+
+def escalation_check_node(state: AgentState) -> AgentState:
+    session = get_session(state["customer_id"]) or {}
+    last_message = session.get("last_message")
+    repeat_count = session.get("repeat_count", 0)
+
+    if last_message and last_message.strip().lower() == state["user_message"].strip().lower():
+        repeat_count += 1
+    else:
+        repeat_count = 1
+
+    reason = rule_based_frustration_check(state["user_message"], repeat_count)
+
+    if not reason:
+        # Only fall back to LLM if rules found nothing — keeps cost down
+        if llm_frustration_check(state["user_message"]):
+            reason = "tone_detected"
+
+    if reason:
+        state["needs_human_handoff"] = True
+        state["escalation_reason"] = reason
+
+    # Save repeat tracking for next turn
+    save_session(state["customer_id"], {
+        "last_message": state["user_message"],
+        "repeat_count": repeat_count,
+    })
+
     return state
