@@ -2,3 +2,6 @@ venv/
 __pycache__/
 *.pyc
 .env
+test_manual.py
+zentric.db
+chroma_db/
