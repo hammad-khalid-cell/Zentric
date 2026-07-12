@@ -1,9 +1,13 @@
 import chromadb
+from app.core.config import CHROMA_API_KEY, CHROMA_TENANT, CHROMA_DATABASE
 
-CHROMA_PATH = "chroma_db"
 COLLECTION_NAME = "faqs"
 
-_client = chromadb.PersistentClient(path=CHROMA_PATH)
+_client = chromadb.CloudClient(
+    tenant=CHROMA_TENANT,
+    database=CHROMA_DATABASE,
+    api_key=CHROMA_API_KEY,
+)
 
 
 def get_collection():

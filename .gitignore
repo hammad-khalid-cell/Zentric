@@ -4,4 +4,3 @@ __pycache__/
 .env
 test_manual.py
 zentric.db
-chroma_db/
