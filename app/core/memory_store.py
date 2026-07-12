@@ -1,20 +1,24 @@
-from typing import Optional
+import json
+from upstash_redis import Redis
+from app.core.config import UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 
-# In-memory session store: { customer_id: { ...session data... } }
-# NOTE: This resets when the server restarts — a real Redis instance
-# would persist across restarts and support automatic expiry (TTL).
-_SESSION_STORE: dict[str, dict] = {}
+redis = Redis(url=UPSTASH_REDIS_REST_URL, token=UPSTASH_REDIS_REST_TOKEN)
+
+SESSION_TTL_SECONDS = 30 * 60  # 30 minutes of inactivity expires the session
 
 
-def get_session(customer_id: str) -> Optional[dict]:
-    return _SESSION_STORE.get(customer_id)
+def get_session(customer_id: str) -> dict | None:
+    raw = redis.get(customer_id)
+    if raw is None:
+        return None
+    return json.loads(raw)
 
 
 def save_session(customer_id: str, data: dict) -> None:
-    existing = _SESSION_STORE.get(customer_id, {})
+    existing = get_session(customer_id) or {}
     existing.update(data)
-    _SESSION_STORE[customer_id] = existing
+    redis.set(customer_id, json.dumps(existing, default=str), ex=SESSION_TTL_SECONDS)
 
 
 def clear_session(customer_id: str) -> None:
-    _SESSION_STORE.pop(customer_id, None)
+    redis.delete(customer_id)
