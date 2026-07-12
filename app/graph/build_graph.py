@@ -7,14 +7,18 @@ from app.graph.nodes import (
     action_execution_node,
     response_generation_node,
     memory_load_node,
-    memory_save_node
+    memory_save_node,
+    faq_node
 )
+
 
 
 def route_after_intent(state: AgentState) -> str:
     if state.get("intent") in {"track_order", "delay_complaint"}:
         return "data_retrieval"
-    return "response_generation"
+    if state.get("intent") == "faq":
+        return "faq_node"
+    return "response_generation"  # unclear intent
 
 
 def route_after_retrieval(state: AgentState) -> str:
@@ -23,6 +27,7 @@ def route_after_retrieval(state: AgentState) -> str:
     if state.get("intent") == "delay_complaint":
         return "decision_making"
     return "response_generation"
+
 
 def build_graph():
     graph = StateGraph(AgentState)
@@ -33,10 +38,10 @@ def build_graph():
     graph.add_node("decision_making", decision_making_node)
     graph.add_node("action_execution", action_execution_node)
     graph.add_node("response_generation", response_generation_node)
+    graph.add_node("faq_node", faq_node)
     graph.add_node("memory_save", memory_save_node)
 
     graph.set_entry_point("memory_load")
-
     graph.add_edge("memory_load", "intent_understanding")
 
     graph.add_conditional_edges(
@@ -44,6 +49,7 @@ def build_graph():
         route_after_intent,
         {
             "data_retrieval": "data_retrieval",
+            "faq_node": "faq_node",
             "response_generation": "response_generation",
         },
     )
@@ -60,9 +66,9 @@ def build_graph():
     graph.add_edge("decision_making", "action_execution")
     graph.add_edge("action_execution", "response_generation")
     graph.add_edge("response_generation", "memory_save")
+    graph.add_edge("faq_node", "memory_save")
     graph.add_edge("memory_save", END)
 
     return graph.compile()
-
 
 compiled_graph = build_graph()

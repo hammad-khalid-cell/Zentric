@@ -53,10 +53,19 @@ def rule_based_intent(message: str) -> str | None:
 
     return None
 
+    
 def llm_intent(message: str) -> str:
     system_prompt = (
         "You are an intent classifier for a logistics customer support system. "
-        "Classify the message into exactly one of: track_order, delay_complaint, faq, unclear. "
+        "Classify the message into exactly one of: track_order, delay_complaint, faq, unclear.\n\n"
+        "IMPORTANT distinctions:\n"
+        "- track_order: the customer wants the STATUS of a SPECIFIC parcel "
+        "(e.g. 'where is my order', 'TRK12345 status', 'has my parcel arrived').\n"
+        "- faq: the customer is asking a GENERAL, how-to, or policy question, "
+        "even if it mentions tracking or delivery in general "
+        "(e.g. 'how do I track my parcel', 'what does COD mean', 'how do I change my address').\n"
+        "- delay_complaint: the customer is reporting or complaining about a delay.\n"
+        "- unclear: none of the above fit.\n\n"
         "Respond with ONLY the category name."
     )
     response = client.chat.completions.create(
@@ -70,7 +79,6 @@ def llm_intent(message: str) -> str:
     result = response.choices[0].message.content.strip().lower()
     valid = {"track_order", "delay_complaint", "faq", "unclear"}
     return result if result in valid else "unclear"
-
 
 
 def intent_understanding_node(state: AgentState) -> AgentState:
@@ -351,4 +359,16 @@ def memory_save_node(state: AgentState) -> AgentState:
         # Resolved — clear any pending clarification
         save_session(state["customer_id"], {"pending_clarification": None})
 
+    return 
+    
+from app.agents.faq_agent import run_faq_agent
+
+# --- FAQ Agent (RAG) ---
+
+def faq_node(state: AgentState) -> AgentState:
+    if state.get("intent") != "faq":
+        return state
+
+    reply = run_faq_agent(state["user_message"])
+    state["final_response"] = reply
     return state
