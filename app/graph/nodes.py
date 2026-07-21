@@ -246,7 +246,7 @@ def action_execution_node(state: AgentState) -> AgentState:
             reason=parcel.get("delay_reason"),
             decision=decision,
         )
-        state["action_taken"] = "ticket_created"
+        state["action_taken"] = "ticket_already_open" if result.get("already_existed") else "ticket_created"
         state["action_result"] = result
 
     elif decision == "reroute":
@@ -254,7 +254,7 @@ def action_execution_node(state: AgentState) -> AgentState:
             tracking_number=parcel["tracking_number"],
             reason=parcel.get("delay_reason"),
         )
-        state["action_taken"] = "reroute_requested"
+        state["action_taken"] = "reroute_already_requested" if result.get("already_existed") else "reroute_requested"
         state["action_result"] = result
 
     else:
