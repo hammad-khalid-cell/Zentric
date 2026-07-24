@@ -124,13 +124,17 @@ def data_retrieval_node(state: AgentState) -> AgentState:
 
     tracking_number = state.get("tracking_number")
 
-    # Case 1: customer gave a tracking number directly — always trust it
+    # Case 1: customer gave a tracking number directly — still must belong to them.
+    # Without this check, any sender could read/act on any other customer's parcel
+    # just by knowing or guessing a tracking number.
     if tracking_number:
         parcel = find_parcel(tracking_number)
-        if parcel:
+        if parcel and parcel["customer_phone"] == state["customer_id"]:
             state["retrieved_data"] = parcel
             state["clarification_needed"] = None
         else:
+            # Same message whether the tracking number doesn't exist or belongs to
+            # someone else — don't give an attacker an oracle to confirm ownership.
             state["retrieved_data"] = None
             state["clarification_needed"] = (
                 f"I couldn't find a parcel with tracking number {tracking_number}. "
