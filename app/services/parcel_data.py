@@ -1,5 +1,20 @@
+from datetime import date
+
 from app.core.database import SessionLocal
 from app.models.parcel import Parcel
+
+
+def find_delayed_parcels() -> list[dict]:
+    db = SessionLocal()
+    try:
+        parcels = (
+            db.query(Parcel)
+            .filter(Parcel.status != "delivered", Parcel.expected_delivery_date < date.today())
+            .all()
+        )
+        return [_to_dict(p) for p in parcels]
+    finally:
+        db.close()
 
 
 def find_parcel(tracking_number: str) -> dict | None:
