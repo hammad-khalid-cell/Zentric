@@ -10,6 +10,40 @@ Last meaningful update: 2026-07-26.
 
 ---
 
+## 0. Starting a session (copy-paste these)
+
+A fresh Claude Code session remembers nothing. Reconstruct context in one turn.
+
+**At the start of any session** (orient before touching code):
+
+```
+Read docs/PROJECT_PLAN.md and docs/ROADMAP.md, then run `git log --oneline -10`.
+Summarize the current state and the next P0 item. Don't write code yet.
+```
+
+**When resuming a specific task**, add what you want:
+
+```
+Read docs/PROJECT_PLAN.md and docs/ROADMAP.md and `git log --oneline -10`, then
+summarize where we are. Today I want to work on <Phase / item>. Confirm the plan
+against the roadmap before writing code.
+```
+
+**At the end of every session** (so the next one starts accurate — the roadmap is
+this project's save file):
+
+```
+Update docs/ROADMAP.md to reflect what we did this session (check boxes, add any
+discovered tasks), then commit it.
+```
+
+Notes: `CLAUDE.md` auto-loads each session and points here, but explicitly asking the
+agent to *read these two docs* is what reliably reloads context. Durable facts (e.g.
+the dual-account git workflow) live in Claude's persistent memory and carry over
+automatically — no need to re-explain them.
+
+---
+
 ## 1. What this project is (one paragraph)
 
 Zentric is an **autonomous, Roman-Urdu-native WhatsApp support agent for Pakistani
