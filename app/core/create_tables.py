@@ -3,6 +3,7 @@ from app.models.parcel import Parcel
 from app.models.ticket import Ticket
 from app.models.reroute import Reroute
 from app.models.notification import Notification
+from app.models.message import Message
 
 
 def create_tables():
