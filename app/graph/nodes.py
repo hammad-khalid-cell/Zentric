@@ -4,7 +4,7 @@ from app.core.groq_client import safe_chat_completion
 from app.graph import state
 from typing import Optional
 from app.graph.state import AgentState
-from app.services.parcel_data import find_parcel, find_parcels_by_phone
+from app.agents.tracking_agent import run_tracking_agent
 from app.services.action_service import create_ticket, create_reroute_request
 from datetime import date
 from app.core.memory_store import get_session, save_session
@@ -108,11 +108,6 @@ def intent_understanding_node(state: AgentState) -> AgentState:
     return state
 
 
-
-from app.services.parcel_data import find_parcel, find_parcels_by_phone
-
-
-
 # --- Data Retrieval Agent ---
 
 def data_retrieval_node(state: AgentState) -> AgentState:
@@ -122,50 +117,13 @@ def data_retrieval_node(state: AgentState) -> AgentState:
     if intent not in {"track_order", "delay_complaint"}:
         return state
 
-    tracking_number = state.get("tracking_number")
-
-    # Case 1: customer gave a tracking number directly — still must belong to them.
-    # Without this check, any sender could read/act on any other customer's parcel
-    # just by knowing or guessing a tracking number.
-    if tracking_number:
-        parcel = find_parcel(tracking_number)
-        if parcel and parcel["customer_phone"] == state["customer_id"]:
-            state["retrieved_data"] = parcel
-            state["clarification_needed"] = None
-        else:
-            # Same message whether the tracking number doesn't exist or belongs to
-            # someone else — don't give an attacker an oracle to confirm ownership.
-            state["retrieved_data"] = None
-            state["clarification_needed"] = (
-                f"I couldn't find a parcel with tracking number {tracking_number}. "
-                "Could you double-check and share it again?"
-            )
-        return state
-
-    # Case 2: no tracking number — look up by their WhatsApp number
-    phone = state["customer_id"]
-    matches = find_parcels_by_phone(phone)
-
-    if len(matches) == 0:
-        state["retrieved_data"] = None
-        state["clarification_needed"] = (
-            "I couldn't find any parcels linked to this number. "
-            "Could you share your tracking ID so I can look it up?"
-        )
-
-    elif len(matches) == 1:
-        state["retrieved_data"] = matches[0]
-        state["clarification_needed"] = None
-
-    else:
-        # Multiple parcels — Option B: ask which one
-        tracking_list = ", ".join(p["tracking_number"] for p in matches)
-        state["retrieved_data"] = None
-        state["clarification_needed"] = (
-            f"You have {len(matches)} active parcels: {tracking_list}. "
-            "Which one would you like to check?"
-        )
-
+    result = run_tracking_agent(
+        user_message=state["user_message"],
+        customer_id=state["customer_id"],
+        tracking_number_hint=state.get("tracking_number"),
+    )
+    state["retrieved_data"] = result["retrieved_data"]
+    state["clarification_needed"] = result["clarification_needed"]
     return state
 
 # --- Decision Making Agent ---
@@ -344,8 +302,6 @@ def response_generation_node(state: AgentState) -> AgentState:
     state["final_response"] = response
     return state
 
-from app.core.memory_store import get_session, save_session
-
 # --- Memory & Context Agent ---
 
 def memory_load_node(state: AgentState) -> AgentState:
@@ -371,8 +327,8 @@ def memory_save_node(state: AgentState) -> AgentState:
         # Resolved — clear any pending clarification
         save_session(state["customer_id"], {"pending_clarification": None})
 
-    return 
-    
+    return state
+
 from app.agents.faq_agent import run_faq_agent
 
 # --- FAQ Agent (RAG) ---

@@ -45,7 +45,6 @@ def build_graph():
 
     graph.set_entry_point("memory_load")
     graph.add_edge("memory_load", "intent_understanding")
-    graph.add_edge("memory_load", "intent_understanding")
     graph.add_edge("intent_understanding", "escalation_check")
 
     
