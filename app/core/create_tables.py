@@ -2,6 +2,7 @@ from app.core.database import Base, engine
 from app.models.parcel import Parcel
 from app.models.ticket import Ticket
 from app.models.reroute import Reroute
+from app.models.notification import Notification
 
 
 def create_tables():
