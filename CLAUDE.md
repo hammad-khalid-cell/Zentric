@@ -18,6 +18,8 @@ override convenience:
   `send_whatsapp_message()` seam — swappable by one env setting, never a rewrite.
 - **Ownership is always verified**; **guardrails stay on**; **deterministic logic
   ships with pytest tests** (mock external boundaries).
+- **No `Co-Authored-By:` trailer or any AI attribution in commit messages** — ever.
+  See `docs/PROJECT_PLAN.md` §10.6.
 - The headline problem is **reducing COD failed-delivery/RTO cost**, not "a chatbot."
 
 ## What this is

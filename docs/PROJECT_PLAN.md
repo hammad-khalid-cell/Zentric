@@ -260,7 +260,9 @@ decision layer and `action_execution`, each writing an auditable row.
 6. **Commit discipline:** one logical change per commit; conventional prefixes
    (`feat:`/`fix:`/`test:`/`docs:`/`refactor:`). Follow the dual-account git workflow
    (work on a feature/topic branch, PR into `main` on the upstream account — never
-   push `main` directly).
+   push `main` directly). **Never add a `Co-Authored-By:` trailer or any other AI
+   attribution to a commit message** — not in any commit, ever. Agents that append one
+   by default must suppress it here; this is graded work defended as the author's own.
 7. **State-shape changes start in `app/graph/state.py`** — it's the contract between
    nodes.
 8. When unsure between "clever" and "auditable/deterministic," pick auditable.
