@@ -11,6 +11,7 @@ from app.services.action_service import (
     find_existing_notification,
     record_notification,
 )
+from app.services.delivery_service import record_attempt_outcome
 from app.services.parcel_data import find_delayed_parcels
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,10 @@ def scan_and_notify() -> int:
 
             if find_existing_notification(tracking_number, reason_code):
                 continue
+
+            # Phase 3 — this scan is what discovers the failed attempt in the first
+            # place; record it (deduplicated per attempt_no via the unique constraint).
+            record_attempt_outcome(tracking_number, "failed", reason_code)
 
             if decision == "escalate":
                 create_ticket(tracking_number=tracking_number, reason=reason_code, decision=decision)
