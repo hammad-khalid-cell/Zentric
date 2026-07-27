@@ -138,9 +138,13 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
 - [x] Tests: auth gate (fail-closed, bad headers, constant-time compare), derived
       status, case merge/filter/limit, thread ordering + cursor, route validation
       (28 new, 163 total)
-- [ ] `GET /metrics/timeseries?days=N` — daily buckets for the trend chart (a pure
-      `compute_daily_series` beside the existing `compute_*` fns; N sliding calls to
-      `/metrics/report` would be N full table scans)
+- [x] `GET /metrics/timeseries?days=N` — daily buckets for the trend chart, pure
+      `compute_daily_series` beside the existing `compute_*` fns (N sliding calls to
+      `/metrics/report` would be N full table scans). Zero-fills quiet days so the
+      chart's x-axis stays continuous; buckets by *local* Asia/Karachi date so it
+      agrees with the after-hours metric; splits the two savings levers
+      (`support_saving_pkr` credits only deflected interactions — an escalated one
+      still cost a human — and `rto_saving_pkr`)
 - [ ] `GET /ops/roi/assumptions` + `POST /ops/roi/simulate` — `app/services/roi_service.py`
 - [ ] `proactive_notifier` doesn't pass `tracking_number` to `send_whatsapp_message`
       (`proactive_notifier.py:79`), so proactive outbound rows land in `messages` with a
@@ -154,6 +158,11 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
 - [ ] KPI panel wired to the metrics service (cards + trend)
 - [ ] Live ROI calculator (volume/COD%/failure rate/agent cost → savings), labelled
       **illustrative & tunable** per `PROJECT_PLAN.md` §3 — never presented as fact
+- [ ] **Spread the demo dataset over several days** — every `Interaction` /
+      `InterventionOutcome` currently lands on the day it was generated, so the trend
+      chart is one spike beside flat zeros. `simulate_outcomes` relies on the
+      `created_at` server default; backdating needs explicit timestamps. Do this before
+      the defense or the trend panel has nothing to show.
 - [ ] Browser customer simulator page — posts to the existing `/webhook/whatsapp`
       (customer surface, no new backend, `send_whatsapp_message()` seam untouched) so
       the "live" demo has a traffic source on the same screen
