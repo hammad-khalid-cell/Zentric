@@ -2,6 +2,7 @@ import logging
 from datetime import date
 
 from app.core.groq_client import safe_chat_completion
+from app.core.pending_actions import create_pending_action
 from app.core.whatsapp_client import send_whatsapp_message
 from app.graph.decision_rules import REASON_TO_DECISION
 from app.services.action_service import (
@@ -71,6 +72,18 @@ def scan_and_notify() -> int:
             message = _generate_notification_message(parcel, decision, days_overdue)
 
             send_whatsapp_message(parcel["customer_phone"], message)
+
+            # Only "notify" reasons are ones the CUSTOMER can resolve (unavailable,
+            # wrong address, reschedule request). Open a pending action for those so
+            # their reply is routed into the corrective loop and can prevent an RTO.
+            # reroute/escalate are operational — a customer reply can't fix them.
+            if decision == "notify":
+                create_pending_action(
+                    tracking_number=tracking_number,
+                    customer_phone=parcel["customer_phone"],
+                    trigger_reason=reason_code,
+                )
+
             if record_notification(tracking_number, reason_code, decision, message):
                 sent_count += 1
         except Exception:

@@ -22,6 +22,9 @@ def make_parcel(**overrides) -> dict:
         "dispatch_date": date.today() - timedelta(days=5),
         "expected_delivery_date": date.today() - timedelta(days=2),  # overdue by default
         "delay_reason": "vehicle_breakdown",
+        "address_line": "House 1, Street 2, Karachi",
+        "preferred_delivery_window": None,
+        "attempt_count": 1,
     }
     parcel.update(overrides)
     return parcel

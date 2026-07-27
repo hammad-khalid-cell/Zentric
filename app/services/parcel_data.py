@@ -45,4 +45,7 @@ def _to_dict(parcel: Parcel) -> dict:
         "dispatch_date": parcel.dispatch_date,
         "expected_delivery_date": parcel.expected_delivery_date,
         "delay_reason": parcel.delay_reason,
+        "address_line": parcel.address_line,
+        "preferred_delivery_window": parcel.preferred_delivery_window,
+        "attempt_count": parcel.attempt_count or 0,
     }

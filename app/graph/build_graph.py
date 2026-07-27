@@ -2,6 +2,7 @@ from langgraph.graph import StateGraph, END
 from app.graph.state import AgentState
 from app.graph.nodes import (
     intent_understanding_node,
+    interpret_reply_node,
     data_retrieval_node,
     decision_making_node,
     action_execution_node,
@@ -15,6 +16,11 @@ from app.graph.nodes import (
 
 
 def route_after_intent(state: AgentState) -> str:
+    # Proactive loop takes precedence: if this customer has an open pending action,
+    # their reply is a continuation of that intervention — route it into the corrective
+    # path (interpret -> deterministic corrective decision) rather than reclassifying.
+    if state.get("pending_action"):
+        return "interpret_reply"
     if state.get("intent") in {"track_order", "delay_complaint"}:
         return "data_retrieval"
     if state.get("intent") == "faq":
@@ -36,6 +42,7 @@ def build_graph():
     graph.add_node("memory_load", memory_load_node)
     graph.add_node("intent_understanding", intent_understanding_node)
     graph.add_node("escalation_check", escalation_check_node)
+    graph.add_node("interpret_reply", interpret_reply_node)
     graph.add_node("data_retrieval", data_retrieval_node)
     graph.add_node("decision_making", decision_making_node)
     graph.add_node("action_execution", action_execution_node)
@@ -52,11 +59,16 @@ def build_graph():
         "escalation_check",
         route_after_intent,
         {
+            "interpret_reply": "interpret_reply",
             "data_retrieval": "data_retrieval",
             "faq_node": "faq_node",
             "response_generation": "response_generation",
         },
     )
+
+    # Interpreted corrective reply flows into the deterministic corrective decision,
+    # then the shared action_execution -> response_generation tail.
+    graph.add_edge("interpret_reply", "decision_making")
 
     graph.add_conditional_edges(
         "data_retrieval",
