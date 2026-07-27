@@ -25,8 +25,10 @@ override convenience:
 Zentric is the backend for an agentic WhatsApp customer-support bot for a Pakistani courier/logistics
 company. It classifies incoming customer messages, looks up parcel status, decides on delay actions
 (notify / reroute / escalate), answers FAQs via RAG, and replies in whichever language/style
-(English or Roman Urdu) the customer used. There is currently a single test-only HTTP endpoint
-(`POST /test/message`) that drives the whole pipeline — there is no WhatsApp integration wired up yet.
+(English or Roman Urdu) the customer used. Messages arrive via `POST /webhook/whatsapp` (Meta
+WhatsApp Cloud API payload shape) or the dev-only `POST /test/message`. Outbound replies go through
+a **mock** WhatsApp channel until Phase 7 (`WHATSAPP_PROVIDER=mock|cloud`, default `mock`) so no
+real API/quota is used yet; see `docs/PROJECT_PLAN.md` §7 for the swap plan.
 
 ## Commands
 

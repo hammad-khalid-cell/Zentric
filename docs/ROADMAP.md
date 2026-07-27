@@ -24,22 +24,26 @@ Last updated: 2026-07-26.
 
 ---
 
-## Phase 1 — Mock WhatsApp channel (two-way) — **P0**
+## Phase 1 — Mock WhatsApp channel (two-way) — **P0** — ✅ done
 
 Goal: demo the full product with **zero** WhatsApp quota used. Swappable with the
 real API by one env setting later (Phase 7).
 
-- [ ] Define `WhatsAppChannel` interface (`send(phone, message)`)
-- [ ] `MockWhatsAppChannel`: persist outbound to a new `messages` table (direction=out)
-- [ ] Route `send_whatsapp_message()` through the selected channel (env `WHATSAPP_PROVIDER=mock|cloud`)
-- [ ] `Message` model + migration (in/out, body, tracking_number?, timestamp)
-- [ ] `POST /webhook/whatsapp` — accepts a Meta-shaped payload, feeds `compiled_graph`, logs inbound
-- [ ] Persist inbound messages to `messages` too (full conversation thread)
-- [ ] Minimal **customer simulator** (web page or CLI) that posts to the webhook
-- [ ] Tests: channel selection, outbound capture, inbound webhook → graph
+- [x] Define `WhatsAppChannel` interface (`send(phone, message)`) — `app/core/whatsapp_client.py`
+- [x] `MockWhatsAppChannel`: persist outbound to a new `messages` table (direction=out)
+- [x] Route `send_whatsapp_message()` through the selected channel (env `WHATSAPP_PROVIDER=mock|cloud`)
+- [x] `Message` model + `create_tables` registration (in/out, body, tracking_number?, timestamp)
+- [x] `POST /webhook/whatsapp` — accepts a Meta-shaped payload, feeds `compiled_graph`, logs inbound
+- [x] Persist inbound messages to `messages` too — `app/services/message_log.py`
+- [x] Minimal **customer simulator** CLI (`python -m app.tools.sim`) that posts to the webhook
+- [x] Tests: channel selection, outbound capture, inbound webhook → graph (10 new, 80 total)
+- [x] GET `/webhook/whatsapp` verification handshake (echoes hub.challenge) — verified via TestClient
 
-**Acceptance:** a simulated customer message flows in via the webhook, the reply is
+**Acceptance:** ✅ a simulated customer message flows in via the webhook, the reply is
 sent via the mock channel, and both are persisted as a conversation.
+
+**One-time setup after pulling:** run `python -m app.core.create_tables` to create the
+new `messages` table.
 
 ---
 

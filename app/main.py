@@ -1,9 +1,10 @@
 from fastapi import FastAPI
-from app.routes import test_routes
+from app.routes import test_routes, whatsapp_routes
 
 app = FastAPI(title="Zentric - Agentic Logistics Support")
 
 app.include_router(test_routes.router)
+app.include_router(whatsapp_routes.router)
 
 
 @app.get("/")

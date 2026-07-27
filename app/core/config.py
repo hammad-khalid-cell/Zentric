@@ -12,6 +12,11 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 UPSTASH_REDIS_REST_URL = os.getenv("UPSTASH_REDIS_REST_URL")
 UPSTASH_REDIS_REST_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN")
 
+# Which WhatsApp channel send_whatsapp_message() dispatches to: "mock" (default,
+# no network/quota) or "cloud" (real Meta API, wired up last). Optional — not a
+# hard-required credential, so the app still boots without it.
+WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "mock").strip().lower()
+
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY not found in .env file")
 
