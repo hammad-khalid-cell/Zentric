@@ -6,7 +6,7 @@
 > progress · `[x]` done. Priorities: **P0** (blocks the value prop) · P1 (makes it
 > worth it / defensible) · P2 (robustness & polish).
 
-Last updated: 2026-07-26 (Phase 2 — proactive loop closed).
+Last updated: 2026-07-27 (Phase 4 — read-only ops API + dashboard auth).
 
 ---
 
@@ -103,17 +103,65 @@ defense, never as fact, per `docs/PROJECT_PLAN.md` §3.
 
 ---
 
-## Phase 4 — Ops / KPI dashboard (frontend) — P1
+## Phase 4 — Ops / KPI dashboard (frontend) — P1 — 🚧 in progress
 
 Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization.
+
+**Decisions taken** (so a later session doesn't relitigate them):
+- **Frontend:** no-build static SPA in `app/static/`, served by FastAPI at `/dashboard`;
+  vanilla JS, hand-rolled inline SVG charts, no CDN (the defense machine may be offline).
+  One process, one URL, nothing to `npm build` on demo morning.
+- **Live updates:** polling with an id cursor (~4s conversations/cases, ~20s KPIs),
+  *not* websockets — the demo runs `app.tools.sim` / `simulate_outcomes` / the proactive
+  scanner as **separate processes**, so any in-process pub/sub would never see them.
+  Postgres is the only shared state. Survives the Phase 7 swap unchanged; SSE is a
+  later drop-in.
+- **ROI model:** computed server-side and pytest-tested — it's a business claim we
+  defend, so it must be one deterministic implementation, not duplicated in JS.
+- **No new tables and no `state.py` change** this phase: it's read-only over what
+  Phases 1–3 already record.
+
+### Backend (read-only ops API)
+
+- [x] Read-only auth for the dashboard — `app/core/auth.py`, shared `DASHBOARD_TOKEN`
+      bearer token, **fails closed with 503 when unset**. Gates `/ops/*` *and*
+      `/metrics/report`. Rationale: an unauthenticated per-phone read would be exactly
+      the ownership oracle `PROJECT_PLAN.md` §5.3 forbids; the customer-facing
+      ownership check in `tracking_agent.py` is untouched.
+- [x] `GET /ops/conversations` — per-customer summary (counts, last message,
+      `last_message_id` as the poll cursor)
+- [x] `GET /ops/conversations/{phone}` — in/out thread, `since_id` for incremental polls
+- [x] `GET /ops/cases` — tickets + reroutes + interventions as one normalised feed,
+      filterable by `type`/`status`. An **intervention's status is derived** (`open` /
+      `delivered` / `still_failed`) from whether an `InterventionOutcome` exists — no
+      status column, no schema change.
+- [x] Tests: auth gate (fail-closed, bad headers, constant-time compare), derived
+      status, case merge/filter/limit, thread ordering + cursor, route validation
+      (28 new, 163 total)
+- [ ] `GET /metrics/timeseries?days=N` — daily buckets for the trend chart (a pure
+      `compute_daily_series` beside the existing `compute_*` fns; N sliding calls to
+      `/metrics/report` would be N full table scans)
+- [ ] `GET /ops/roi/assumptions` + `POST /ops/roi/simulate` — `app/services/roi_service.py`
+- [ ] `proactive_notifier` doesn't pass `tracking_number` to `send_whatsapp_message`
+      (`proactive_notifier.py:79`), so proactive outbound rows land in `messages` with a
+      null tracking number and the dashboard thread can't say which parcel they're about
+      — one-line fix, found while smoke-testing the ops API
+
+### Frontend
 
 - [ ] Conversation view (per customer, in/out thread from `messages`)
 - [ ] Tickets / reroutes / interventions list with status
 - [ ] KPI panel wired to the metrics service (cards + trend)
-- [ ] Live ROI calculator (plug in volume/COD%/failure rate/agent cost → savings)
-- [ ] Read-only auth for the dashboard
+- [ ] Live ROI calculator (volume/COD%/failure rate/agent cost → savings), labelled
+      **illustrative & tunable** per `PROJECT_PLAN.md` §3 — never presented as fact
+- [ ] Browser customer simulator page — posts to the existing `/webhook/whatsapp`
+      (customer surface, no new backend, `send_whatsapp_message()` seam untouched) so
+      the "live" demo has a traffic source on the same screen
 
 **Acceptance:** open the dashboard, watch a live conversation and the KPIs update.
+
+**One-time setup after pulling:** no migration this phase, but set `DASHBOARD_TOKEN`
+in `.env` — without it the ops API and `/metrics/report` return 503 by design.
 
 ---
 
@@ -162,6 +210,11 @@ Backs the safety/quality claims with evidence.
 
 ## Discovered / parking lot
 
+- [ ] Link `messages` to `interactions` (shared id) so the dashboard can show latency
+      per reply instead of correlating by phone + timestamp — noted while building Phase 4
+- [ ] Tests hit **real Chroma Cloud at import time** (`vector_store` builds its client
+      on import), so collection fails on a flaky network despite `tests/conftest.py`
+      claiming no external calls — same root cause as the Phase 0 dummy-env fixture item
 - [ ] Roman-Urdu code-switched labeled dataset + classification accuracy report (optional novelty artifact)
 - [ ] Merchant-facing notifications (COD sale protected)
 - [ ] Address geocoding/validation

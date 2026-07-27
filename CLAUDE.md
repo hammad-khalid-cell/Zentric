@@ -61,6 +61,11 @@ Required environment variables (validated eagerly in `app/core/config.py`; the a
 without all of them): `GROQ_API_KEY`, `GEMINI_API_KEY`, `CHROMA_API_KEY`, `CHROMA_TENANT`,
 `CHROMA_DATABASE`, `DATABASE_URL`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`.
 
+Optional (defaulted, never block startup): `WHATSAPP_PROVIDER`, the metrics cost assumptions, and
+`DASHBOARD_TOKEN`. `DASHBOARD_TOKEN` is the shared read-only bearer token for the ops API (`/ops/*`
+and `/metrics/report`); it deliberately has **no default** and those endpoints return 503 until it's
+set — see `app/core/auth.py`.
+
 **Quirk:** `requirements.txt` is UTF-16LE encoded (not UTF-8). Tools that assume UTF-8 will show it as
 garbled/space-separated text. Preserve the encoding if editing it directly, or regenerate it with
 `pip freeze`.
