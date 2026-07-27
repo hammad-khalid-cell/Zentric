@@ -46,15 +46,20 @@ def generate_random_parcels(count: int) -> list[dict]:
             expected_delivery_date = date.today() + timedelta(days=random.randint(0, 5))
             delay_reason = None
 
+        destination_city = random.choice(CITIES)
         parcels.append({
             "tracking_number": tracking_number,
             "customer_phone": random.choice(PHONE_NUMBERS),
             "status": status,
             "current_hub": random.choice(HUBS),
-            "destination_city": random.choice(CITIES),
+            "destination_city": destination_city,
             "dispatch_date": dispatch_date,
             "expected_delivery_date": expected_delivery_date,
             "delay_reason": delay_reason,
+            "address_line": f"House {random.randint(1, 500)}, Street {random.randint(1, 40)}, {destination_city}",
+            "preferred_delivery_window": None,
+            # A delayed parcel has already had a failed first attempt; on-track ones haven't.
+            "attempt_count": 1 if is_delayed else 0,
         })
 
     return parcels
@@ -72,6 +77,9 @@ FIXED_PARCELS = [
         "dispatch_date": date.today() - timedelta(days=2),
         "expected_delivery_date": date.today() + timedelta(days=1),
         "delay_reason": None,
+        "address_line": "House 12, Street 5, Gulshan, Karachi",
+        "preferred_delivery_window": None,
+        "attempt_count": 0,
     },
     {
         "tracking_number": "TRK67890",
@@ -82,6 +90,9 @@ FIXED_PARCELS = [
         "dispatch_date": date.today() - timedelta(days=3),
         "expected_delivery_date": date.today(),
         "delay_reason": None,
+        "address_line": "House 12, Street 5, Gulshan, Karachi",
+        "preferred_delivery_window": None,
+        "attempt_count": 0,
     },
     {
         "tracking_number": "TRK99999",
@@ -92,6 +103,9 @@ FIXED_PARCELS = [
         "dispatch_date": date.today() - timedelta(days=6),
         "expected_delivery_date": date.today() - timedelta(days=1),
         "delay_reason": "vehicle_breakdown",
+        "address_line": "Flat 3, Blue Area, Islamabad",
+        "preferred_delivery_window": None,
+        "attempt_count": 1,
     },
     {
         "tracking_number": "TRK55555",
@@ -102,6 +116,26 @@ FIXED_PARCELS = [
         "dispatch_date": date.today() - timedelta(days=5),
         "expected_delivery_date": date.today() - timedelta(days=2),
         "delay_reason": "shipment_damaged",
+        "address_line": "House 88, Model Town, Lahore",
+        "preferred_delivery_window": None,
+        "attempt_count": 1,
+    },
+    # Phase 2 demo parcel: an "incorrect_address" delay (a NOTIFY reason) owned by the
+    # main test number, so scan_and_notify sends a proactive message AND opens a
+    # pending action — the customer can then reply with a corrected address to close
+    # the loop (the RTO-prevention acceptance case).
+    {
+        "tracking_number": "TRK20250",
+        "customer_phone": "923001234567",
+        "status": "out_for_delivery",
+        "current_hub": "Karachi Local Hub",
+        "destination_city": "Karachi",
+        "dispatch_date": date.today() - timedelta(days=4),
+        "expected_delivery_date": date.today() - timedelta(days=1),
+        "delay_reason": "incorrect_address",
+        "address_line": "House 9 (incomplete), Karachi",
+        "preferred_delivery_window": None,
+        "attempt_count": 1,
     },
 ]
 

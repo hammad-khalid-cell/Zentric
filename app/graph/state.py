@@ -36,6 +36,17 @@ class AgentState(TypedDict):
 
     # NEW — memory/context
     pending_clarification: Optional[dict]   # what we're waiting on the customer to answer
-    session_loaded: Optional[bool] 
+    session_loaded: Optional[bool]
 
     escalation_reason: Optional[str]
+
+    # NEW — proactive loop (Phase 2). When a proactive delay message was sent, a
+    # parcel-scoped pending action is stored; the customer's reply is interpreted
+    # into a structured corrective intent that a DETERMINISTIC policy then acts on.
+    # The LLM only interprets free text into `corrective_intent`/`corrective_payload`;
+    # it never chooses the business action (that's CORRECTIVE_INTENT_TO_ACTION).
+    pending_action: Optional[dict]          # open intervention loaded from the pending-action store
+    corrective_intent: Optional[Literal[
+        "reschedule", "update_address", "available_window", "cancel", "unclear"
+    ]]
+    corrective_payload: Optional[dict]      # extracted slots: {"address": ..., "window": ...}

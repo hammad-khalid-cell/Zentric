@@ -1,9 +1,17 @@
+from datetime import date, timedelta
+
 from sqlalchemy.exc import IntegrityError
 
 from app.core.database import SessionLocal
 from app.models.ticket import Ticket
 from app.models.reroute import Reroute
 from app.models.notification import Notification
+from app.models.parcel import Parcel
+from app.models.intervention import Intervention
+
+# When a corrective action reschedules a delivery, this is how far ahead the next
+# attempt is set. Kept as a module constant so it's easy to tune / move to config.
+RESCHEDULE_DAYS = 2
 
 
 def find_open_ticket(tracking_number: str) -> dict | None:
@@ -76,6 +84,91 @@ def create_reroute_request(tracking_number: str, reason: str) -> dict:
         db.commit()
 
         return {"reroute_id": reroute.reroute_id, "status": "requested", "already_existed": False}
+    finally:
+        db.close()
+
+
+def _record_intervention(db, tracking_number: str, action: str, detail: str) -> str:
+    """Insert an auditable Intervention row inside the caller's session and return
+    its human-readable id. Flush (not commit) so it shares the parcel-mutation
+    transaction — the write-back and its audit row commit atomically."""
+    intervention = Intervention(
+        intervention_id="PENDING",
+        tracking_number=tracking_number,
+        action=action,
+        detail=detail,
+    )
+    db.add(intervention)
+    db.flush()  # assigns the autoincrement id, same race-free pattern as tickets
+    intervention.intervention_id = f"INT-{intervention.id:04d}"
+    return intervention.intervention_id
+
+
+def apply_address_update(tracking_number: str, new_address: str, customer_phone: str) -> dict:
+    """Corrective action: update the parcel's delivery address AND reschedule the next
+    attempt (a fixed address is only useful with a fresh delivery attempt). Verifies
+    ownership defensively even though the caller already did — a parcel is only ever
+    mutated for the phone number that owns it. Writes an Intervention audit row."""
+    db = SessionLocal()
+    try:
+        parcel = db.query(Parcel).filter_by(tracking_number=tracking_number.upper()).first()
+        if not parcel or parcel.customer_phone != customer_phone:
+            return {"applied": False, "reason": "not_found_or_not_owned"}
+
+        old_address = parcel.address_line
+        new_date = date.today() + timedelta(days=RESCHEDULE_DAYS)
+
+        parcel.address_line = new_address
+        parcel.expected_delivery_date = new_date
+        parcel.attempt_count = (parcel.attempt_count or 0) + 1
+        parcel.status = "out_for_delivery"
+        parcel.delay_reason = None  # the address problem is resolved
+
+        detail = f"Address updated from '{old_address}' to '{new_address}'; redelivery set for {new_date}."
+        intervention_id = _record_intervention(db, parcel.tracking_number, "update_address", detail)
+        db.commit()
+
+        return {
+            "applied": True,
+            "intervention_id": intervention_id,
+            "new_address": new_address,
+            "new_delivery_date": new_date,
+            "attempt_count": parcel.attempt_count,
+        }
+    finally:
+        db.close()
+
+
+def apply_reschedule(tracking_number: str, customer_phone: str, window: str | None = None) -> dict:
+    """Corrective action: reschedule the next delivery attempt (optionally recording a
+    preferred window). Ownership-verified; writes an Intervention audit row."""
+    db = SessionLocal()
+    try:
+        parcel = db.query(Parcel).filter_by(tracking_number=tracking_number.upper()).first()
+        if not parcel or parcel.customer_phone != customer_phone:
+            return {"applied": False, "reason": "not_found_or_not_owned"}
+
+        new_date = date.today() + timedelta(days=RESCHEDULE_DAYS)
+
+        parcel.expected_delivery_date = new_date
+        parcel.attempt_count = (parcel.attempt_count or 0) + 1
+        parcel.status = "out_for_delivery"
+        parcel.delay_reason = None
+        if window:
+            parcel.preferred_delivery_window = window
+
+        window_note = f" (preferred window: {window})" if window else ""
+        detail = f"Delivery rescheduled for {new_date}{window_note}."
+        intervention_id = _record_intervention(db, parcel.tracking_number, "reschedule", detail)
+        db.commit()
+
+        return {
+            "applied": True,
+            "intervention_id": intervention_id,
+            "new_delivery_date": new_date,
+            "preferred_delivery_window": window,
+            "attempt_count": parcel.attempt_count,
+        }
     finally:
         db.close()
 

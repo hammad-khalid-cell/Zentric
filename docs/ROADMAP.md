@@ -6,7 +6,7 @@
 > progress · `[x]` done. Priorities: **P0** (blocks the value prop) · P1 (makes it
 > worth it / defensible) · P2 (robustness & polish).
 
-Last updated: 2026-07-26.
+Last updated: 2026-07-26 (Phase 2 — proactive loop closed).
 
 ---
 
@@ -47,21 +47,29 @@ new `messages` table.
 
 ---
 
-## Phase 2 — Close the proactive loop — **P0 (the RTO money lever)**
+## Phase 2 — Close the proactive loop — **P0 (the RTO money lever)** — ✅ done
 
 Goal: proactive message → customer reply → **corrective action** → changed outcome.
 
-- [ ] `state.py`: add fields for corrective intents/actions (contract first)
-- [ ] Pending-action store (parcel-scoped, TTL > session) linking a proactive contact to its expected reply
-- [ ] Reply interpretation: free-text → structured intent (`reschedule` / `update_address` / `available_window` / `cancel`) — LLM *interprets*, deterministic policy *acts*
-- [ ] New deterministic actions in decision/action layer: `reschedule`, `update_address`
-- [ ] `Parcel`: updatable address fields + preferred delivery window + attempt counter
-- [ ] `action_execution`: apply corrective action, write auditable row
-- [ ] Route a reply that matches a pending action into the corrective path (not fresh classification)
-- [ ] Tests: each corrective path, pending-action expiry, wrong/ambiguous replies
+- [x] `state.py`: add fields for corrective intents/actions (contract first) — `pending_action`, `corrective_intent`, `corrective_payload`
+- [x] Pending-action store (parcel-scoped, TTL > session) linking a proactive contact to its expected reply — `pending_actions` table + `app/core/pending_actions.py` (48h TTL, lazy expiry)
+- [x] Reply interpretation: free-text → structured intent (`reschedule` / `update_address` / `available_window` / `cancel`) — LLM *interprets* (`interpret_reply_node`), deterministic policy *acts* (`CORRECTIVE_INTENT_TO_ACTION`)
+- [x] New deterministic actions in decision/action layer: `reschedule`, `update_address`
+- [x] `Parcel`: updatable address fields + preferred delivery window + attempt counter (`address_line`, `preferred_delivery_window`, `attempt_count`)
+- [x] `action_execution`: apply corrective action, write auditable row — `apply_address_update` / `apply_reschedule` + `interventions` audit table
+- [x] Route a reply that matches a pending action into the corrective path (not fresh classification) — `route_after_intent` gates on `pending_action`
+- [x] Tests: each corrective path, pending-action expiry, wrong/ambiguous replies (32 new, 112 total)
+- [x] `proactive_notifier` opens a pending action for `notify`-reason parcels so the reply connects
+- [x] Ownership verified on the corrective write-back (parcel only mutated for the owning number)
 
-**Acceptance:** proactive notify for an "incorrect_address" parcel → customer replies
+**Acceptance:** ✅ proactive notify for an "incorrect_address" parcel → customer replies
 with a new address → parcel address updated + attempt rescheduled + audit row written.
+
+**One-time setup after pulling:** run `python -m app.core.create_tables` to create the
+new `pending_actions` and `interventions` tables, then apply the `parcels` `ALTER TABLE`
+migration and re-seed. `create_tables` only *creates* new tables — the new `Parcel`
+columns (`address_line`, `preferred_delivery_window`, `attempt_count`) need a manual
+`ALTER TABLE` on an existing DB. Full steps + SQL in **`docs/MIGRATIONS.md`**.
 
 ---
 
