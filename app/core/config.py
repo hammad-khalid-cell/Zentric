@@ -17,6 +17,23 @@ UPSTASH_REDIS_REST_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN")
 # hard-required credential, so the app still boots without it.
 WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "mock").strip().lower()
 
+# Phase 3 — metrics cost assumptions. Tunable business assumptions, not infra
+# credentials, so these have defaults and never block startup. Keep them here (not
+# hard-coded in metrics_service) so the ROI model is adjustable live during the
+# defense. Human/bot PKR figures are the plan doc's own illustrative numbers
+# (docs/PROJECT_PLAN.md §3); RTO_COST_PKR is a net-new placeholder for the
+# round-trip-with-zero-cash-collected cost of a failed COD delivery — an illustrative
+# assumption, not a sourced fact, until validated against real courier data.
+HUMAN_COST_PER_QUERY_PKR = float(os.getenv("HUMAN_COST_PER_QUERY_PKR", "30"))
+BOT_COST_PER_QUERY_PKR = float(os.getenv("BOT_COST_PER_QUERY_PKR", "2"))
+RTO_COST_PKR = float(os.getenv("RTO_COST_PKR", "450"))
+
+# Business-hours window (used for the after-hours-coverage % metric). Simplistic v1:
+# a single hour-of-day window, no weekend/day-of-week distinction.
+BUSINESS_HOURS_TIMEZONE = os.getenv("BUSINESS_HOURS_TIMEZONE", "Asia/Karachi")
+BUSINESS_HOURS_START_HOUR = int(os.getenv("BUSINESS_HOURS_START_HOUR", "9"))
+BUSINESS_HOURS_END_HOUR = int(os.getenv("BUSINESS_HOURS_END_HOUR", "18"))
+
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY not found in .env file")
 

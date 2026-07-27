@@ -73,20 +73,33 @@ columns (`address_line`, `preferred_delivery_window`, `attempt_count`) need a ma
 
 ---
 
-## Phase 3 — Outcome tracking & metrics — **P0 (ROI evidence for defense)**
+## Phase 3 — Outcome tracking & metrics — **P0 (ROI evidence for defense)** — ✅ done
 
 Goal: produce the numbers §3/§9 of the plan promise.
 
-- [ ] `DeliveryAttempt` model (attempt_no, outcome, failure_reason, timestamp)
-- [ ] `InterventionOutcome` model linking intervention → later delivery outcome
-- [ ] Instrument the graph + proactive loop to record attempts/interventions/deflections
-- [ ] Metrics service: deflection rate, cost-per-interaction, **RTO reduction %**, response time, after-hours %, language reach %
-- [ ] Cost assumptions in **config** (human PKR/query, bot PKR/query, PKR/RTO) — tunable live
-- [ ] Seed/simulate a believable dataset so metrics are non-trivial in the demo
-- [ ] Tests: metric calculations against known fixtures
+- [x] `DeliveryAttempt` model (attempt_no, outcome, failure_reason, timestamp) — `app/models/delivery_attempt.py`, unique per `(tracking_number, attempt_no)`
+- [x] `InterventionOutcome` model linking intervention → later delivery outcome — `app/models/intervention_outcome.py`
+- [x] `Interaction` model (new, not originally named) — one row per graph run; the raw material for deflection rate, cost, response time, after-hours %, language reach % — `app/models/interaction.py`
+- [x] Instrument the graph + proactive loop to record attempts/interventions/deflections — `decision_making_node` + `scan_and_notify` record the organic first-failure `DeliveryAttempt`; `record_interaction()` is called from both `compiled_graph.invoke()` call sites (`test_routes.py`, `whatsapp_inbound.py`)
+- [x] `app/services/delivery_service.py::record_attempt_outcome()` — writes the `DeliveryAttempt` and links an unresolved `Intervention` to an `InterventionOutcome` when one resolves
+- [x] Metrics service: deflection rate, cost-per-interaction, **RTO reduction %**, response time, after-hours %, language reach % — `app/services/metrics_service.py`, pure `compute_*` functions over plain dicts + `get_metrics_report()`
+- [x] Cost assumptions in **config** (human PKR/query, bot PKR/query, PKR/RTO) — tunable live — `app/core/config.py` (`HUMAN_COST_PER_QUERY_PKR`, `BOT_COST_PER_QUERY_PKR`, `RTO_COST_PKR`, business-hours window)
+- [x] Seed/simulate a believable dataset so metrics are non-trivial in the demo — `python -m app.tools.simulate_outcomes` (weighted resolver for open interventions; a real delivery-system webhook would call the same `record_attempt_outcome` seam later, Phase 6)
+- [x] `GET /metrics/report` endpoint (`app/routes/metrics_routes.py`), optional `since`/`until`
+- [x] Tests: metric calculations against known fixtures (30 new — `test_delivery_service.py`, `test_metrics_service.py`, `test_interaction_log.py`, `test_language_detect.py`; 135 total)
 
-**Acceptance:** a metrics endpoint/report returns real KPI values derived from the
-system's own recorded outcomes.
+**Acceptance:** ✅ `GET /metrics/report` returns real KPI values derived from the
+system's own recorded `Interaction`/`InterventionOutcome` rows.
+
+**One-time setup after pulling:** run `python -m app.core.create_tables` to create the
+new `delivery_attempts`, `intervention_outcomes`, and `interactions` tables (all
+brand-new — no `ALTER TABLE` needed this phase). Requires the `tzdata` package
+(added to `requirements.txt`) for `zoneinfo` to resolve `Asia/Karachi` on Windows,
+where no system tz database is installed by default.
+
+**Known simplification:** `RTO_COST_PKR` (default 450) is an illustrative placeholder,
+not sourced from real courier data — present it as tunable/parameterised in the
+defense, never as fact, per `docs/PROJECT_PLAN.md` §3.
 
 ---
 

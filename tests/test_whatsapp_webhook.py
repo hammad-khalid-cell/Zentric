@@ -44,13 +44,15 @@ def test_extract_empty_payload():
 
 @pytest.fixture
 def patched(monkeypatch):
-    logged, sent = [], []
+    logged, sent, interactions = [], [], []
     monkeypatch.setattr(whatsapp_inbound, "log_message",
                         lambda phone, direction, body, tn=None: logged.append((phone, direction, body)))
     monkeypatch.setattr(whatsapp_inbound, "send_whatsapp_message",
                         lambda phone, message, tracking_number=None: sent.append((phone, message)))
     monkeypatch.setattr(whatsapp_inbound, "check_rate_limit", lambda cid: True)
-    return {"logged": logged, "sent": sent}
+    monkeypatch.setattr(whatsapp_inbound, "record_interaction",
+                        lambda state, elapsed_ms: interactions.append((state, elapsed_ms)))
+    return {"logged": logged, "sent": sent, "interactions": interactions}
 
 
 def test_inbound_happy_path_logs_and_replies(monkeypatch, patched):
@@ -65,6 +67,9 @@ def test_inbound_happy_path_logs_and_replies(monkeypatch, patched):
     assert patched["logged"][0] == ("923001234567", whatsapp_inbound.DIRECTION_IN, "where is TRK1")
     # outbound sent
     assert patched["sent"] == [("923001234567", "Your parcel is in Lahore.")]
+    # interaction recorded once, from the graph's final state
+    assert len(patched["interactions"]) == 1
+    assert patched["interactions"][0][0] is graph.result
 
 
 def test_inbound_rate_limited_skips_graph(monkeypatch, patched):
@@ -86,3 +91,6 @@ def test_inbound_graph_failure_sends_fallback(monkeypatch, patched):
 
     assert "trouble processing" in reply.lower()
     assert patched["sent"][0][0] == "923001234567"
+    # a graph failure is still recorded as an escalated interaction
+    assert len(patched["interactions"]) == 1
+    assert patched["interactions"][0][0]["needs_human_handoff"] is True

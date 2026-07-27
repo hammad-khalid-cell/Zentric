@@ -1,10 +1,12 @@
 import re
+import time
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.memory_store import check_rate_limit
 from app.graph.build_graph import compiled_graph
+from app.services.interaction_log import record_interaction
 
 router = APIRouter()
 
@@ -45,7 +47,9 @@ def test_message(payload: MessageRequest):
         "customer_id": payload.from_number,
     }
 
+    started_at = time.monotonic()
     result = compiled_graph.invoke(initial_state)
+    record_interaction(result, elapsed_ms=int((time.monotonic() - started_at) * 1000))
 
     return {
         "message": payload.message,

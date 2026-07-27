@@ -18,6 +18,32 @@ Order of operations when pulling schema changes:
 
 ---
 
+## Phase 3 — outcome tracking & metrics (2026-07-27)
+
+**New tables** (created automatically by `create_tables`, no `ALTER TABLE` needed —
+no existing table changed this phase): `delivery_attempts`, `intervention_outcomes`,
+`interactions`.
+
+- `delivery_attempts` — one row per delivery attempt outcome; unique on
+  `(tracking_number, attempt_no)`.
+- `intervention_outcomes` — links an `interventions` row to the delivery attempt that
+  resolved it (`'delivered'` = RTO prevented, `'still_failed'`).
+- `interactions` — one row per agent-graph run (deflection/cost/response-time/
+  after-hours/language metrics all derive from this; distinct from `messages`, which
+  is the conversation transcript).
+
+**New dependency:** `tzdata` (added to `requirements.txt`) — Python's `zoneinfo` has
+no bundled timezone database, and Windows doesn't ship a system one either, so
+resolving `Asia/Karachi` (used for the after-hours metric) needs the `tzdata` package
+installed. `pip install -r requirements.txt` picks it up automatically.
+
+**Demo data:** after applying at least one corrective action (Phase 2's proactive
+loop), run `python -m app.tools.simulate_outcomes` once to resolve open interventions
+to a delivered/still-failed outcome (there's no real courier feedback signal yet —
+Phase 6) so `GET /metrics/report`'s RTO-reduction % is non-trivial for the demo.
+
+---
+
 ## Phase 2 — proactive loop (2026-07-26)
 
 **New tables** (created automatically by `create_tables`): `pending_actions`, `interventions`.
