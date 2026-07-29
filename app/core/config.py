@@ -34,6 +34,25 @@ RTO_COST_PKR = float(os.getenv("RTO_COST_PKR", "450"))
 # per-user auth is Phase 6.
 DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN")
 
+# Phase 5 — a SECOND, separate token for the write endpoints (claim/resolve a handoff).
+# Phase 4's whole argument for a single shared token was that the ops surface could not
+# write; "mark handled" ends that, so reads and writes are separately credentialled
+# rather than quietly widening the read token's power. Also no default, and also fails
+# closed: unset means the write endpoints 503 and the ops API is exactly as read-only
+# as it was in Phase 4. Real per-user accounts remain Phase 6 — which is why the write
+# endpoints require an explicit `actor` in the body instead of inferring identity.
+DASHBOARD_WRITE_TOKEN = os.getenv("DASHBOARD_WRITE_TOKEN")
+
+# Phase 5 — where staff handoff alerts go (app/core/staff_notifier.py). A separate port
+# from the customer WhatsApp channel on purpose; see that module's docstring.
+STAFF_NOTIFY_PROVIDER = os.getenv("STAFF_NOTIFY_PROVIDER", "log").strip().lower()
+
+# How long a handoff stays live before it lapses back to the bot. The failure mode this
+# guards is a human claiming a thread and walking away, which would otherwise silence
+# the bot for that customer forever. One shift is long enough to be real and short
+# enough that an abandoned claim self-heals overnight.
+HANDOFF_TTL_HOURS = float(os.getenv("HANDOFF_TTL_HOURS", "8"))
+
 # Business-hours window (used for the after-hours-coverage % metric). Simplistic v1:
 # a single hour-of-day window, no weekend/day-of-week distinction.
 BUSINESS_HOURS_TIMEZONE = os.getenv("BUSINESS_HOURS_TIMEZONE", "Asia/Karachi")

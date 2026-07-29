@@ -18,6 +18,39 @@ Order of operations when pulling schema changes:
 
 ---
 
+## Phase 5 — human handoff (2026-07-29)
+
+**New table** (created automatically by `create_tables`, no `ALTER TABLE` needed — no
+existing table changed this phase): `handoffs`.
+
+- `handoffs` — one row per conversation handed to a human. Keyed by
+  **`customer_phone`, not tracking number**: human ownership applies to a customer's
+  whole thread, across every parcel and intent, which is why this isn't a column on
+  `tickets` (those are parcel-scoped and `tracking_number` is `NOT NULL`). Lifecycle
+  `open → claimed → resolved`, with `expired` as a lazily-swept safety valve; every
+  transition stamps who and when.
+
+**New environment variables** (both optional, both defaulted safely — nothing blocks
+startup):
+
+```bash
+DASHBOARD_WRITE_TOKEN=<a second, different secret>   # required to claim/resolve
+STAFF_NOTIFY_PROVIDER=log                            # log | slack | email (default log)
+HANDOFF_TTL_HOURS=8                                  # default 8
+```
+
+`DASHBOARD_WRITE_TOKEN` is deliberately **separate from `DASHBOARD_TOKEN`** and has no
+default. Phase 4's case for one shared token rested on the ops surface being unable to
+write; "mark handled" ends that, so reads and writes are separately credentialled.
+Leave it unset and the write endpoints return 503 — the ops API is then exactly as
+read-only as it was in Phase 4. Set it to a *different* value from `DASHBOARD_TOKEN`,
+or the split buys you nothing.
+
+**No demo-data step**, but note that a handoff only appears once something escalates —
+send "let me talk to a human" through `/simulator` to put one in the queue.
+
+---
+
 ## Phase 3 — outcome tracking & metrics (2026-07-27)
 
 **New tables** (created automatically by `create_tables`, no `ALTER TABLE` needed —

@@ -1,15 +1,22 @@
 """Read-only ops dashboard API (Phase 4).
 
-Every endpoint here is a GET behind `require_dashboard_token` — the dashboard reads
-the system's own records and never writes, so it cannot introduce an unaudited state
-change (`docs/PROJECT_PLAN.md` §5.2), and it is not reachable without the ops token
-(§5.3, see `app/core/auth.py`).
+**Every endpoint in this file is a GET behind `require_dashboard_token`** and writes
+nothing, so it cannot introduce an unaudited state change (`docs/PROJECT_PLAN.md`
+§5.2), and it is not reachable without the ops token (§5.3, see `app/core/auth.py`).
+The single exception is `POST /ops/roi/simulate`, a POST only because it takes a
+request body — it is pure computation and touches no state.
+
+Phase 5 added the first genuine writes to the ops surface (claim/resolve a handoff).
+They are deliberately **not** here: they live in `app/routes/ops_write_routes.py`
+behind a separate `DASHBOARD_WRITE_TOKEN`, precisely so the invariant in the paragraph
+above stays true of this file and can be checked by reading it.
 """
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.core import handoffs
 from app.core.auth import require_dashboard_token
 from app.services import ops_read, roi_service
 from app.services.metrics_service import get_metrics_report
@@ -68,6 +75,27 @@ def list_cases(
             detail=f"type must be one of: {', '.join(ops_read.CASE_TYPES)}",
         )
     return {"cases": ops_read.list_cases(case_type=type, status=status, limit=limit)}
+
+
+HANDOFF_STATUSES = (
+    handoffs.STATUS_OPEN, handoffs.STATUS_CLAIMED,
+    handoffs.STATUS_RESOLVED, handoffs.STATUS_EXPIRED,
+)
+
+
+@router.get("/handoffs")
+def list_handoffs(
+    status: str | None = Query(None, description=f"One of {', '.join(HANDOFF_STATUSES)}"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """The human-handoff queue (Phase 5), newest first. Read-only: taking or resolving
+    one is a write and lives in `ops_write_routes.py` behind the write token."""
+    if status is not None and status not in HANDOFF_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of: {', '.join(HANDOFF_STATUSES)}",
+        )
+    return {"handoffs": handoffs.list_handoffs(status=status, limit=limit)}
 
 
 class RoiRequest(BaseModel):

@@ -6,7 +6,7 @@
 > progress · `[x]` done. Priorities: **P0** (blocks the value prop) · P1 (makes it
 > worth it / defensible) · P2 (robustness & polish).
 
-Last updated: 2026-07-29 (Phase 4 — ops dashboard UI, ROI model, ops API).
+Last updated: 2026-07-29 (Phase 5 — human handoff, bot suppression, ops write API).
 
 ---
 
@@ -216,12 +216,74 @@ in `.env` — without it the ops API and `/metrics/report` return 503 by design.
 
 ---
 
-## Phase 5 — Human handoff — P1
+## Phase 5 — Human handoff — P1 — ✅ done
 
-- [ ] On escalation, notify staff (channel/queue) — not just a flag/ticket
-- [ ] A place a human can view the thread and mark it handled (dashboard tie-in)
-- [ ] Suppress bot auto-replies once a human has taken over
-- [ ] Tests: handoff routing + bot suppression
+**Decisions taken** (so a later session doesn't relitigate them):
+- **Two tokens, not one.** Phase 4's argument for a single shared `DASHBOARD_TOKEN` was
+  that the ops surface *could not write*. "Mark handled" is the first real write, so
+  rather than quietly widening the read token, writes need a separate
+  `DASHBOARD_WRITE_TOKEN`. The defensible claim changes shape but survives: it is no
+  longer "the dashboard is read-only" but **"a holder of the read token alone still
+  cannot write"** — and with the write token unset, the API *is* exactly Phase 4's.
+- **Writes live in their own router** (`app/routes/ops_write_routes.py`), not bolted
+  onto `ops_routes.py`, so that file's "every endpoint here is a GET behind the read
+  token" invariant stays true and checkable by reading one file. A test asserts it
+  structurally.
+- **A separate notification port**, not the WhatsApp seam. `send_whatsapp_message()` is
+  the *customer* channel — its mock persists to `messages` keyed by `customer_phone`,
+  so staff alerts through it would inject internal notices into customer threads and
+  would spend real Meta quota in Phase 7. Same shape, same one-env swap, different
+  destination.
+- **Conversation-scoped, in its own table.** Not a `Ticket` column (parcel-scoped,
+  `tracking_number NOT NULL`, wrong grain — the most common trigger has no parcel at
+  all) and not Redis (ephemeral; this is an auditable business-affecting state change
+  per §5.2 that the dashboard reads from Postgres).
+- **Only `claimed` suppresses the bot**, not `open`. An open handoff means staff were
+  alerted but nobody has picked it up — silence then leaves the customer with nothing.
+
+- [x] On escalation, notify staff (channel/queue) — not just a flag/ticket.
+      **The gap was worse than the roadmap said:** `escalation_check_node` set
+      `needs_human_handoff`, produced a soothing reply, and created *nothing* durable —
+      no ticket (those need a parcel), no queue entry. Now `raise_handoff()` opens a
+      `Handoff` row and alerts staff via the new `app/core/staff_notifier.py` seam
+      (`STAFF_NOTIFY_PROVIDER=log|slack|email`, default `log`, no network/quota). The
+      delay path's `decision == "escalate"` links its handoff to the `Ticket` it creates.
+      Alerts follow the *row*, not the message, so three angry messages raise one alert.
+      Notification delivery is itself audited (`notified_at` / `notify_failed`).
+- [x] A place a human can view the thread and mark it handled — Handoffs pane on
+      `/dashboard`, with **two** transitions rather than one: *Take* (`open → claimed`)
+      is what silences the bot, *Resolve* (`claimed → resolved`) restores it. Collapsing
+      them would conflate "I'm on it" with "it's done" and make the suppression window
+      invisible. `actor` is required and never defaulted — there are no staff accounts
+      yet (Phase 6), so an explicit name is the honest audit record. Repeat clicks get a
+      409 rather than silently rewriting `claimed_at`/`resolved_at`.
+- [x] Suppress bot auto-replies once a human has taken over — `human_handoff` /
+      `handoff_suppressed` added to `state.py` (contract first), loaded in
+      `memory_load_node`, and short-circuited by `route_after_memory_load` into a
+      terminal `handoff_hold` node **before** intent classification, so a human-owned
+      turn costs no LLM call. The customer's message is still logged inbound (that
+      happens before the graph), so the human sees it; the bot simply sends nothing —
+      a "someone will be with you shortly" on every message would interleave bot text
+      into a conversation a person is handling. `needs_human_handoff` is set, so the
+      existing `record_interaction` books the turn as `resolved_by='human'` and it
+      never inflates the deflection rate. `HANDOFF_TTL_HOURS` (default 8, one shift)
+      lazily expires an abandoned claim so a human who walks away can't silence the bot
+      for that customer forever.
+- [x] Tests: handoff routing + bot suppression — 62 new (287 total).
+      `test_handoff.py` (store lifecycle, idempotency, expiry sweep, notifier seam +
+      an AST check that it never imports the customer WhatsApp channel),
+      `test_handoff_routing.py` (routing, suppression, escalation → handoff,
+      end-to-end through `process_inbound_message`), `test_ops_write_routes.py`
+      (**the read token cannot write** — the load-bearing auth test — plus attribution,
+      409s, and a structural guard that no mutating route lands in the read router).
+
+**Acceptance:** ✅ an escalation raises a handoff and alerts staff; taking it on the
+dashboard silences the bot for that customer; resolving it hands the thread back.
+
+**One-time setup after pulling:** `python -m app.core.create_tables` for the new
+`handoffs` table, then set `DASHBOARD_WRITE_TOKEN` (a *different* value from
+`DASHBOARD_TOKEN`) — without it the handoff buttons return 503 by design. See
+**`docs/MIGRATIONS.md`**.
 
 ---
 

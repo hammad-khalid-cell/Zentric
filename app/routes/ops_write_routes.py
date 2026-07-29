@@ -1,0 +1,73 @@
+"""Ops **write** API — the first endpoints on this surface that change state (Phase 5).
+
+Kept in its own module, with its own router-level dependency, rather than bolted onto
+`ops_routes.py`. That file's invariant — *every endpoint here is a GET behind the read
+token, so the dashboard cannot introduce an unaudited state change* — is worth being
+able to verify by reading one file, and mixing a POST into it would quietly destroy
+that. Everything that mutates lives here and nowhere else.
+
+Three properties this surface must keep (`docs/PROJECT_PLAN.md` §5.2):
+
+1. **Separately credentialled.** `require_dashboard_write_token` demands
+   `DASHBOARD_WRITE_TOKEN`; the read token is refused. A holder of the read token
+   alone still cannot write.
+2. **Attributed.** `actor` is required in every body and is never defaulted. There is
+   no user table yet (Phase 6), so an explicit name is the honest way to record who
+   acted — an audit row reading "ops" would be worse than no claim at all.
+3. **Non-idempotent transitions fail loudly.** Claiming an already-claimed handoff, or
+   resolving a resolved one, returns 409 rather than silently rewriting `claimed_at` /
+   `resolved_at` and corrupting the trail.
+
+Nothing here touches a parcel, reveals parcel data, or bypasses the customer-side
+ownership check in `tracking_agent.py`. The only state these endpoints move is who owns
+a conversation.
+"""
+from fastapi import APIRouter, Depends, HTTPException, Path
+from pydantic import BaseModel, Field
+
+from app.core import handoffs
+from app.core.auth import require_dashboard_write_token
+
+router = APIRouter(prefix="/ops", dependencies=[Depends(require_dashboard_write_token)])
+
+
+class HandoffActionRequest(BaseModel):
+    """`actor` is required and must be non-blank — see property 2 above."""
+
+    actor: str = Field(..., min_length=1, max_length=80,
+                       description="Who is performing this action (staff name or id)")
+    note: str | None = Field(None, max_length=500,
+                             description="Optional free-text resolution note")
+
+    def clean_actor(self) -> str:
+        actor = self.actor.strip()
+        if not actor:
+            raise HTTPException(status_code=422, detail="actor must not be blank")
+        return actor
+
+
+def _transition(action, handoff_id: int, *args) -> dict:
+    """Run a store transition, mapping an inapplicable state change to 409."""
+    try:
+        return action(handoff_id, *args)
+    except handoffs.HandoffTransitionError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/handoffs/{handoff_id}/claim")
+def claim_handoff(payload: HandoffActionRequest, handoff_id: int = Path(..., ge=1)):
+    """Take ownership of a conversation. **This is the transition that silences the
+    bot** — from here until it's resolved (or the TTL lapses), inbound messages from
+    this customer are logged for the human to read but get no automated reply."""
+    handoff = _transition(handoffs.claim_handoff, handoff_id, payload.clean_actor())
+    return {"handoff": handoff, "bot_suppressed": True}
+
+
+@router.post("/handoffs/{handoff_id}/resolve")
+def resolve_handoff(payload: HandoffActionRequest, handoff_id: int = Path(..., ge=1)):
+    """Mark the conversation handled and hand it back to the bot. Allowed directly
+    from `open` as well as from `claimed` — a case settled out of band (a phone call)
+    never needed claiming first."""
+    handoff = _transition(handoffs.resolve_handoff, handoff_id,
+                          payload.clean_actor(), payload.note)
+    return {"handoff": handoff, "bot_suppressed": False}

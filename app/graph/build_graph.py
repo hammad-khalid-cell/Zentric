@@ -1,4 +1,5 @@
 from langgraph.graph import StateGraph, END
+from app.core.handoffs import STATUS_CLAIMED
 from app.graph.state import AgentState
 from app.graph.nodes import (
     intent_understanding_node,
@@ -10,9 +11,28 @@ from app.graph.nodes import (
     memory_load_node,
     memory_save_node,
     faq_node,
-    escalation_check_node
+    escalation_check_node,
+    handoff_hold_node,
 )
 
+
+def route_after_memory_load(state: AgentState) -> str:
+    """Human ownership short-circuits everything (Phase 5).
+
+    Checked here — the first thing after state is loaded — rather than in the route
+    handler, for three reasons: `/test/message` and the webhook both enter through the
+    graph so one check covers both; it runs before intent classification, so a
+    human-owned conversation costs no LLM call at all; and business routing stays in
+    the one place business routing is decided.
+
+    Only a **claimed** handoff suppresses the bot. An `open` one means staff have been
+    alerted but nobody has picked it up yet — going silent then would leave the
+    customer with nothing while they wait, which is worse than the bot helping.
+    """
+    handoff = state.get("human_handoff")
+    if handoff and handoff.get("status") == STATUS_CLAIMED:
+        return "handoff_hold"
+    return "intent_understanding"
 
 
 def route_after_intent(state: AgentState) -> str:
@@ -48,10 +68,22 @@ def build_graph():
     graph.add_node("action_execution", action_execution_node)
     graph.add_node("response_generation", response_generation_node)
     graph.add_node("faq_node", faq_node)
+    graph.add_node("handoff_hold", handoff_hold_node)
     graph.add_node("memory_save", memory_save_node)
 
     graph.set_entry_point("memory_load")
-    graph.add_edge("memory_load", "intent_understanding")
+
+    # Before anything else: if a human owns this thread, hold — no classification, no
+    # LLM call, no auto-reply.
+    graph.add_conditional_edges(
+        "memory_load",
+        route_after_memory_load,
+        {
+            "handoff_hold": "handoff_hold",
+            "intent_understanding": "intent_understanding",
+        },
+    )
+    graph.add_edge("handoff_hold", "memory_save")
     graph.add_edge("intent_understanding", "escalation_check")
 
     

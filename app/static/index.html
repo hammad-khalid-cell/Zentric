@@ -13,9 +13,13 @@
 <div class="gate" id="gate">
   <div class="card">
     <h1>Zentric Ops</h1>
-    <p>Read-only dashboard. Enter the ops token to continue.</p>
+    <p>Enter the ops token to continue.</p>
     <form id="gate-form">
       <input type="password" id="token-input" placeholder="DASHBOARD_TOKEN" autocomplete="off" autofocus>
+      <!-- Separate credential, separate field. Reads and writes are deliberately not
+           the same token: without this one the dashboard is read-only, which is
+           exactly how Phase 4 shipped. -->
+      <input type="password" id="write-token-input" placeholder="DASHBOARD_WRITE_TOKEN (optional — needed to take handoffs)" autocomplete="off">
       <button class="btn" type="submit">Open dashboard</button>
     </form>
     <div class="error" id="gate-error"></div>
@@ -100,6 +104,35 @@
         <div class="table-scroll" id="roi-funnel"></div>
         <div class="note" id="roi-note"></div>
       </div>
+    </div>
+  </section>
+
+  <!-- Human handoff queue (Phase 5). The only part of this dashboard that writes,
+       and it needs the separate DASHBOARD_WRITE_TOKEN — claiming a thread is what
+       silences the bot for that customer, so it is deliberately not something the
+       read token can do. -->
+  <section>
+    <div class="section-head">
+      <h2>Handoffs</h2>
+      <p>Conversations waiting on a human. Taking one silences the bot for that customer until it is resolved.</p>
+      <div class="filter-row">
+        <div class="seg" id="handoff-seg" role="group" aria-label="Handoff status">
+          <button type="button" data-status="" aria-pressed="true">All</button>
+          <button type="button" data-status="open" aria-pressed="false">Waiting</button>
+          <button type="button" data-status="claimed" aria-pressed="false">In progress</button>
+          <button type="button" data-status="resolved" aria-pressed="false">Resolved</button>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="handoff-actor">
+        <label for="actor-input">Acting as</label>
+        <input id="actor-input" type="text" maxlength="80" placeholder="your name"
+               autocomplete="off">
+        <span class="note">Recorded on every claim and resolve — there are no staff accounts yet.</span>
+      </div>
+      <div class="table-scroll" id="handoffs"></div>
+      <div class="error" id="handoff-error"></div>
     </div>
   </section>
 

@@ -1,3 +1,4 @@
+import logging
 import re
 import json
 from app.core.groq_client import safe_chat_completion
@@ -14,8 +15,17 @@ from app.services.action_service import (
 from app.services.delivery_service import record_attempt_outcome
 from app.services.parcel_data import find_parcel
 from app.core.pending_actions import get_open_pending_action, resolve_pending_action
+from app.core.handoffs import (
+    STATUS_CLAIMED,
+    create_handoff,
+    get_active_handoff,
+    mark_notified,
+)
+from app.core.staff_notifier import notify_staff
 from datetime import date
 from app.core.memory_store import get_session, save_session
+
+logger = logging.getLogger(__name__)
 
 
 # --- Intent Understanding Agent ---
@@ -344,6 +354,11 @@ def action_execution_node(state: AgentState) -> AgentState:
         )
         state["action_taken"] = "ticket_already_open" if result.get("already_existed") else "ticket_created"
         state["action_result"] = result
+        # Phase 5 — the ticket is the parcel-scoped audit row; the handoff is the
+        # conversation-scoped queue entry that actually puts a human on it. Linked by
+        # ticket_id so the dashboard can show them as one case.
+        raise_handoff(state, reason=parcel.get("delay_reason") or "escalate",
+                      ticket_id=result.get("ticket_id"))
 
     elif decision == "reroute":
         result = create_reroute_request(
@@ -491,6 +506,11 @@ def response_generation_node(state: AgentState) -> AgentState:
 # --- Memory & Context Agent ---
 
 def memory_load_node(state: AgentState) -> AgentState:
+    # Phase 5 — does a human currently own this customer's thread? Loaded first and
+    # checked by route_after_memory_load *before* intent classification, so a
+    # human-owned conversation costs no LLM call and generates no auto-reply.
+    state["human_handoff"] = get_active_handoff(state["customer_id"])
+
     session = get_session(state["customer_id"])
     if session:
         state["pending_clarification"] = session.get("pending_clarification")
@@ -532,6 +552,66 @@ def faq_node(state: AgentState) -> AgentState:
     reply = run_faq_agent(state["user_message"])
     state["final_response"] = reply
     return state
+
+# --- Human handoff (Phase 5) ---
+
+def raise_handoff(state: AgentState, reason: str, ticket_id: str | None = None) -> dict | None:
+    """Open a handoff for this customer and alert staff.
+
+    Deterministic: the *decision* to hand off was already made by
+    `rule_based_frustration_check` or by REASON_TO_DECISION mapping to 'escalate'. This
+    only records it and notifies — it never decides anything, and the LLM is not
+    involved at any point (`docs/PROJECT_PLAN.md` §5.1).
+
+    Staff are alerted only for a genuinely *new* handoff. A customer sending three
+    angry messages in a row is one problem, not three, and `create_handoff` is
+    idempotent per customer while one is live — so the alert follows the row, not the
+    message. Never raises: an alerting failure must not break the customer's reply.
+    """
+    try:
+        handoff = create_handoff(
+            customer_phone=state["customer_id"],
+            reason=reason,
+            tracking_number=state.get("tracking_number"),
+            ticket_id=ticket_id,
+        )
+    except Exception:
+        logger.exception("Could not open a handoff for %s", state["customer_id"])
+        return None
+
+    if not handoff.get("already_existed"):
+        mark_notified(handoff["id"], notify_staff(handoff))
+
+    state["human_handoff"] = handoff
+    return handoff
+
+
+def handoff_hold_node(state: AgentState) -> AgentState:
+    """Terminal node for a customer message that arrives while a human owns the thread.
+
+    The bot stays **silent**. The inbound message is still logged (that happens in
+    `process_inbound_message` before the graph runs), so it appears in the human's
+    dashboard thread — which is the point. What we don't do is auto-reply: a "someone
+    will be with you shortly" on every message is worse than silence, and it would
+    interleave bot text into a conversation a person is actively handling. The
+    acknowledgement already went out on the turn that escalated.
+
+    `needs_human_handoff` is set so `record_interaction` books this turn as
+    resolved_by='human' — a human-owned turn must never count toward the deflection
+    rate.
+    """
+    state["final_response"] = None
+    state["handoff_suppressed"] = True
+    state["needs_human_handoff"] = True
+    state["action_taken"] = "suppressed_human_owns_thread"
+    handoff = state.get("human_handoff") or {}
+    state["escalation_reason"] = handoff.get("reason")
+    logger.info(
+        "Bot suppressed for %s — handoff #%s claimed by %s",
+        state["customer_id"], handoff.get("id"), handoff.get("claimed_by"),
+    )
+    return state
+
 
 # --- Escalation / Frustration Detection ---
 
@@ -602,6 +682,11 @@ def escalation_check_node(state: AgentState) -> AgentState:
     if reason:
         state["needs_human_handoff"] = True
         state["escalation_reason"] = reason
+        # Phase 5 — before this, a conversational escalation set a flag, produced a
+        # soothing reply, and left no durable record at all: no ticket (those need a
+        # parcel), no queue entry, nothing for a human to act on. Now it raises a
+        # handoff and alerts staff.
+        raise_handoff(state, reason)
 
     # Save repeat tracking for next turn
     save_session(state["customer_id"], {

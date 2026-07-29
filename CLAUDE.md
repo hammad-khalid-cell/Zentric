@@ -47,8 +47,12 @@ python -m app.core.seed_data          # seeds ~50 test parcels (idempotent, skip
 python -m app.services.ingest_faqs    # embeds data/logistics_customer_support_faqs.json into Chroma
 ```
 
-There is no automated test suite in the repo (no pytest config, no `tests/` directory). Manual testing
-is done by POSTing to `/test/message`:
+Run the tests with `python -m pytest` (287 tests). The suite is **enforced offline**: an autouse
+fixture in `tests/conftest.py` blocks remote sockets, so an unmocked external boundary fails
+immediately at the call site instead of intermittently on a DNS blip. Loopback stays open because
+FastAPI's `TestClient` needs a local socketpair. Opt out with `@pytest.mark.allow_network`.
+
+Manual testing is done by POSTing to `/test/message`:
 
 ```bash
 curl -X POST http://localhost:8000/test/message \
@@ -63,10 +67,19 @@ Required environment variables (validated eagerly in `app/core/config.py`; the a
 without all of them): `GROQ_API_KEY`, `GEMINI_API_KEY`, `CHROMA_API_KEY`, `CHROMA_TENANT`,
 `CHROMA_DATABASE`, `DATABASE_URL`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`.
 
-Optional (defaulted, never block startup): `WHATSAPP_PROVIDER`, the metrics cost assumptions, and
-`DASHBOARD_TOKEN`. `DASHBOARD_TOKEN` is the shared read-only bearer token for the ops API (`/ops/*`
-and `/metrics/report`); it deliberately has **no default** and those endpoints return 503 until it's
-set — see `app/core/auth.py`.
+Optional (defaulted, never block startup): `WHATSAPP_PROVIDER`, the metrics cost assumptions,
+`STAFF_NOTIFY_PROVIDER`, `HANDOFF_TTL_HOURS`, and the two dashboard tokens.
+
+**Two ops tokens, deliberately separate** (`app/core/auth.py`):
+
+- `DASHBOARD_TOKEN` — reads (`/ops/*` GETs, `/metrics/report`).
+- `DASHBOARD_WRITE_TOKEN` — required for the Phase 5 writes (claim/resolve a handoff).
+  The read token is **refused** on write endpoints; the write token is accepted on reads.
+
+Both have **no default** and fail closed with 503. Phase 4's case for a single shared token was
+that the ops surface couldn't write; Phase 5's "mark handled" ended that, so the property to
+protect is now "a holder of the read token alone cannot write" — not "the dashboard is read-only".
+With `DASHBOARD_WRITE_TOKEN` unset, the API is exactly as read-only as Phase 4's.
 
 **Quirk:** `requirements.txt` is UTF-16LE encoded (not UTF-8). Tools that assume UTF-8 will show it as
 garbled/space-separated text. Preserve the encoding if editing it directly, or regenerate it with
@@ -77,11 +90,19 @@ garbled/space-separated text. Preserve the encoding if editing it directly, or r
 `app/static/` is a **no-build** static app (vanilla JS, hand-rolled inline SVG charts, no
 CDN) served by this same FastAPI process — `GET /dashboard` for the ops view, `GET
 /simulator` for the customer-side simulator. There is no npm toolchain; edit the files and
-reload. It reads the token-gated `/ops/*` + `/metrics/*` endpoints and **never writes**:
-the only non-GET is `POST /ops/roi/simulate`, which is pure computation. Live updates are
-**polled** (4s ops / 20s KPIs, id-cursor for threads), because the traffic sources
-(`app.tools.sim`, `simulate_outcomes`, the proactive notifier) run as separate processes —
-an in-process event bus would never see them.
+reload. Live updates are **polled** (4s ops / 20s KPIs, id-cursor for threads), because the
+traffic sources (`app.tools.sim`, `simulate_outcomes`, the proactive notifier) run as
+separate processes — an in-process event bus would never see them.
+
+It is almost entirely read-only. Two exceptions, and the distinction matters:
+
+- `POST /ops/roi/simulate` — a POST only because it takes a request body; pure computation,
+  writes nothing, lives in the read router.
+- `POST /ops/handoffs/{id}/claim|resolve` (Phase 5) — the **only** endpoints that mutate.
+  They live in a separate router (`app/routes/ops_write_routes.py`) behind
+  `DASHBOARD_WRITE_TOKEN`, precisely so `ops_routes.py`'s "every endpoint here is a GET"
+  invariant stays true and checkable by reading one file. A test enforces it structurally.
+  Put any future write there, never in `ops_routes.py`.
 
 Charts follow the `dataviz` skill's method; the two series colours (blue = support lever,
 orange = RTO lever) are validated for both light and dark mode. If you add a chart, load
@@ -98,13 +119,15 @@ The core of the app is a LangGraph state machine, not a typical request/response
 **Graph topology** (`app/graph/build_graph.py`, nodes implemented in `app/graph/nodes.py`):
 
 ```
-memory_load -> intent_understanding -> escalation_check --route_after_intent-->
-    - "track_order"/"delay_complaint" -> data_retrieval --route_after_retrieval-->
-        - clarification_needed -> response_generation
-        - intent == "delay_complaint" -> decision_making -> action_execution -> response_generation
+memory_load --route_after_memory_load-->
+    - human_handoff is "claimed" -> handoff_hold -> memory_save -> END   (bot stays silent)
+    - else -> intent_understanding -> escalation_check --route_after_intent-->
+        - "track_order"/"delay_complaint" -> data_retrieval --route_after_retrieval-->
+            - clarification_needed -> response_generation
+            - intent == "delay_complaint" -> decision_making -> action_execution -> response_generation
+            - else -> response_generation
+        - "faq" -> faq_node -> memory_save -> END
         - else -> response_generation
-    - "faq" -> faq_node -> memory_save -> END
-    - else -> response_generation
 response_generation -> memory_save -> END
 ```
 
@@ -129,6 +152,17 @@ which of several parcels they mean. `memory_save_node` persists a `pending_clari
 Redis (via `app/core/memory_store.py`) so the next inbound message from that customer is treated by
 `intent_understanding_node` as a continuation (it looks for a bare tracking number in the reply) rather
 than reclassified from scratch.
+
+**Human handoff (Phase 5)** is *conversation*-scoped, not parcel-scoped: once a human claims a
+thread the bot must go quiet for that customer across every parcel and intent. State lives in the
+`handoffs` table (`app/core/handoffs.py`, same durable + lazy-expiry shape as `pending_actions.py`)
+rather than on `Ticket` (parcel-scoped, wrong grain) or in Redis (ephemeral; this is an auditable
+state change). `escalation_check_node` and the `escalate` branch of `action_execution_node` call
+`raise_handoff()`, which opens the row and alerts staff through `app/core/staff_notifier.py` — **a
+separate port from `send_whatsapp_message()`**, because that seam is the customer channel and
+staff alerts must not land in customer threads or spend Meta quota. Only a **claimed** handoff
+suppresses the bot (an `open` one is still waiting for someone to pick it up). Suppressed turns are
+still logged inbound and are recorded as `resolved_by='human'`, so they never inflate deflection.
 
 **Session memory** (`app/core/memory_store.py`) is Upstash Redis accessed over its REST API, keyed by
 customer phone number, with a 30-minute TTL. It stores `pending_clarification` state and the

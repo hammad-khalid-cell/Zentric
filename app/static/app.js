@@ -26,8 +26,12 @@
 
   const state = {
     token: sessionStorage.getItem("zentric_token") || "",
+    // Separate credential for the write endpoints (Phase 5). Absent by default: with
+    // no write token the dashboard behaves exactly as the read-only Phase 4 one did.
+    writeToken: sessionStorage.getItem("zentric_write_token") || "",
     days: 14,
     caseType: "",
+    handoffStatus: "",
     selectedPhone: null,
     threadCursor: null,
     convoSignature: null,   // cheap change-detect so the poll doesn't rebuild an unchanged list
@@ -49,12 +53,15 @@
   }
 
   async function api(path, options = {}) {
+    // `write: true` sends the write credential instead of the read one. The server
+    // refuses the read token on write endpoints, so this is not merely cosmetic.
+    const { write = false, ...rest } = options;
     const response = await fetch(path, {
-      ...options,
+      ...rest,
       headers: {
-        Authorization: `Bearer ${state.token}`,
-        ...(options.body ? { "Content-Type": "application/json" } : {}),
-        ...(options.headers || {}),
+        Authorization: `Bearer ${write ? state.writeToken : state.token}`,
+        ...(rest.body ? { "Content-Type": "application/json" } : {}),
+        ...(rest.headers || {}),
       },
     });
     if (!response.ok) {
@@ -648,6 +655,115 @@
     container.appendChild(table);
   }
 
+  // --- handoff queue (the only writing surface) --------------------------
+
+  const HANDOFF_TONES = {
+    open: { tone: "critical", icon: "!", label: "Waiting" },
+    claimed: { tone: "warning", icon: "◐", label: "In progress" },
+    resolved: { tone: "good", icon: "✓", label: "Resolved" },
+    expired: { tone: "serious", icon: "×", label: "Lapsed" },
+  };
+
+  function handoffAction(handoff, action, label) {
+    const button = el("button", { class: "btn small", type: "button" , text: label });
+    button.addEventListener("click", async () => {
+      const actor = $("actor-input").value.trim();
+      const error = $("handoff-error");
+      if (!actor) {
+        error.textContent = "Enter who you are before taking or resolving a handoff.";
+        $("actor-input").focus();
+        return;
+      }
+      if (!state.writeToken) {
+        error.textContent = "No write token — sign in again with DASHBOARD_WRITE_TOKEN to act on handoffs.";
+        return;
+      }
+      button.disabled = true;
+      try {
+        await api(`/ops/handoffs/${handoff.id}/${action}`, {
+          method: "POST", write: true, body: JSON.stringify({ actor }),
+        });
+        error.textContent = "";
+        await refreshHandoffs();
+      } catch (err) {
+        // 409 means someone else already moved it — say so plainly rather than
+        // leaving a dead button.
+        error.textContent = err.status === 409
+          ? `${err.message} Refreshing.`
+          : err.status === 401
+            ? "That write token was rejected."
+            : "Could not update the handoff — retrying shortly.";
+        if (err.status === 409) await refreshHandoffs();
+      } finally {
+        button.disabled = false;
+      }
+    });
+    return button;
+  }
+
+  function renderHandoffs(rows) {
+    const container = $("handoffs");
+    clear(container);
+    if (!rows.length) {
+      container.appendChild(el("div", { class: "empty", text: "No handoffs — the bot is handling everything." }));
+      return;
+    }
+
+    const table = el("table");
+    const head = el("tr");
+    for (const label of ["Status", "Customer", "Reason", "Parcel", "Owner", "Raised", "Action"]) {
+      head.appendChild(el("th", { text: label }));
+    }
+    table.appendChild(el("thead", {}, [head]));
+
+    const body = el("tbody");
+    for (const handoff of rows) {
+      const { tone, icon, label } = HANDOFF_TONES[handoff.status]
+        || { tone: "serious", icon: "•", label: titleCase(handoff.status) };
+      const row = el("tr");
+
+      row.appendChild(el("td", {}, [
+        el("span", { class: "status", "data-tone": tone }, [
+          el("span", { class: "status-icon", text: icon, "aria-hidden": "true" }),
+          el("span", { text: label }),
+        ]),
+      ]));
+      row.appendChild(el("td", { class: "mono", text: handoff.customer_phone }));
+      row.appendChild(el("td", { text: titleCase(handoff.reason) }));
+      row.appendChild(el("td", { class: "mono", text: handoff.tracking_number || "—" }));
+      row.appendChild(el("td", {
+        text: handoff.resolved_by || handoff.claimed_by || "—",
+      }));
+      row.appendChild(el("td", { class: "mono", text: stamp(handoff.created_at) }));
+
+      const actions = el("td");
+      if (handoff.status === "open") {
+        actions.appendChild(handoffAction(handoff, "claim", "Take"));
+        actions.appendChild(handoffAction(handoff, "resolve", "Resolve"));
+      } else if (handoff.status === "claimed") {
+        actions.appendChild(handoffAction(handoff, "resolve", "Resolve"));
+      } else {
+        actions.appendChild(el("span", { class: "muted", text: "—" }));
+      }
+      // An un-notified handoff sitting in the queue is exactly what an ops lead needs
+      // to notice, so surface the failure rather than hiding it.
+      if (handoff.notify_failed) {
+        actions.appendChild(el("div", { class: "warn-note", text: "staff alert failed" }));
+      }
+      row.appendChild(actions);
+
+      body.appendChild(row);
+    }
+    table.appendChild(body);
+    container.appendChild(table);
+  }
+
+  async function refreshHandoffs() {
+    const query = state.handoffStatus ? `?status=${state.handoffStatus}&limit=50` : "?limit=50";
+    const payload = await api(`/ops/handoffs${query}`);
+    renderHandoffs(payload.handoffs);
+  }
+
   async function refreshOps() {
     const typeQuery = state.caseType ? `?type=${state.caseType}&limit=50` : "?limit=50";
     const [conversations, cases] = await Promise.all([
@@ -656,6 +772,7 @@
     ]);
     renderConversations(conversations.conversations);
     renderCases(cases.cases);
+    await refreshHandoffs();
     await pollThread();
   }
 
@@ -830,11 +947,14 @@
   function signOut(message) {
     stopPolling();
     state.token = "";
+    state.writeToken = "";
     state.convoSignature = null;   // force a rebuild on the next sign-in
     sessionStorage.removeItem("zentric_token");
+    sessionStorage.removeItem("zentric_write_token");
     $("gate").hidden = false;
     $("gate-error").textContent = message || "";
     $("token-input").value = "";
+    $("write-token-input").value = "";
   }
 
   async function start() {
@@ -852,9 +972,13 @@
     const token = $("token-input").value.trim();
     if (!token) return;
     state.token = token;
+    // Optional. Without it everything still loads; only the handoff buttons are
+    // unusable, which is the honest representation of a read-only credential.
+    state.writeToken = $("write-token-input").value.trim();
     try {
       await api("/ops/conversations?limit=1");
       sessionStorage.setItem("zentric_token", token);
+      if (state.writeToken) sessionStorage.setItem("zentric_write_token", state.writeToken);
       $("gate-error").textContent = "";
       start();
     } catch (error) {
@@ -874,6 +998,15 @@
     $("range-seg").querySelectorAll("button").forEach((b) =>
       b.setAttribute("aria-pressed", String(b === button)));
     guarded(refreshPerformance, { dim: true });
+  });
+
+  $("handoff-seg").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-status]");
+    if (!button) return;
+    state.handoffStatus = button.dataset.status;
+    $("handoff-seg").querySelectorAll("button").forEach((b) =>
+      b.setAttribute("aria-pressed", String(b === button)));
+    guarded(refreshHandoffs);
   });
 
   $("case-seg").addEventListener("click", (event) => {
