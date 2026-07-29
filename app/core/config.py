@@ -28,6 +28,12 @@ HUMAN_COST_PER_QUERY_PKR = float(os.getenv("HUMAN_COST_PER_QUERY_PKR", "30"))
 BOT_COST_PER_QUERY_PKR = float(os.getenv("BOT_COST_PER_QUERY_PKR", "2"))
 RTO_COST_PKR = float(os.getenv("RTO_COST_PKR", "450"))
 
+# Phase 4 — shared read-only token for the ops dashboard's API (app/core/auth.py).
+# Deliberately has NO default: the dashboard reads every customer's conversations, so
+# an unset token must fail closed (503) rather than leave those reads open. Real
+# per-user auth is Phase 6.
+DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN")
+
 # Business-hours window (used for the after-hours-coverage % metric). Simplistic v1:
 # a single hour-of-day window, no weekend/day-of-week distinction.
 BUSINESS_HOURS_TIMEZONE = os.getenv("BUSINESS_HOURS_TIMEZONE", "Asia/Karachi")

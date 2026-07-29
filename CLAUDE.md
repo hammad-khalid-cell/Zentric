@@ -18,6 +18,8 @@ override convenience:
   `send_whatsapp_message()` seam — swappable by one env setting, never a rewrite.
 - **Ownership is always verified**; **guardrails stay on**; **deterministic logic
   ships with pytest tests** (mock external boundaries).
+- **No `Co-Authored-By:` trailer or any AI attribution in commit messages** — ever.
+  See `docs/PROJECT_PLAN.md` §10.6.
 - The headline problem is **reducing COD failed-delivery/RTO cost**, not "a chatbot."
 
 ## What this is
@@ -61,9 +63,29 @@ Required environment variables (validated eagerly in `app/core/config.py`; the a
 without all of them): `GROQ_API_KEY`, `GEMINI_API_KEY`, `CHROMA_API_KEY`, `CHROMA_TENANT`,
 `CHROMA_DATABASE`, `DATABASE_URL`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`.
 
+Optional (defaulted, never block startup): `WHATSAPP_PROVIDER`, the metrics cost assumptions, and
+`DASHBOARD_TOKEN`. `DASHBOARD_TOKEN` is the shared read-only bearer token for the ops API (`/ops/*`
+and `/metrics/report`); it deliberately has **no default** and those endpoints return 503 until it's
+set — see `app/core/auth.py`.
+
 **Quirk:** `requirements.txt` is UTF-16LE encoded (not UTF-8). Tools that assume UTF-8 will show it as
 garbled/space-separated text. Preserve the encoding if editing it directly, or regenerate it with
 `pip freeze`.
+
+## Ops dashboard (Phase 4)
+
+`app/static/` is a **no-build** static app (vanilla JS, hand-rolled inline SVG charts, no
+CDN) served by this same FastAPI process — `GET /dashboard` for the ops view, `GET
+/simulator` for the customer-side simulator. There is no npm toolchain; edit the files and
+reload. It reads the token-gated `/ops/*` + `/metrics/*` endpoints and **never writes**:
+the only non-GET is `POST /ops/roi/simulate`, which is pure computation. Live updates are
+**polled** (4s ops / 20s KPIs, id-cursor for threads), because the traffic sources
+(`app.tools.sim`, `simulate_outcomes`, the proactive notifier) run as separate processes —
+an in-process event bus would never see them.
+
+Charts follow the `dataviz` skill's method; the two series colours (blue = support lever,
+orange = RTO lever) are validated for both light and dark mode. If you add a chart, load
+that skill first rather than picking colours ad hoc.
 
 ## Architecture
 

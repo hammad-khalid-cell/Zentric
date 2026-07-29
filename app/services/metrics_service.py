@@ -4,7 +4,7 @@ a live DB session) so it's trivially unit-testable against known fixtures; only
 `get_metrics_report` touches the database, translating rows to dicts before handing
 off to the compute functions.
 """
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from statistics import median
 from zoneinfo import ZoneInfo
 
@@ -92,6 +92,93 @@ def compute_language_reach_pct(interactions: list[dict]) -> float:
     return round(roman_urdu / len(interactions) * 100, 1)
 
 
+def _local_date(dt: datetime, tz: ZoneInfo) -> date:
+    """Bucket key for the daily series. Rows read back from Postgres `timestamptz` are
+    tz-aware; the naive guard is here because `astimezone()` on a naive datetime would
+    silently assume the *server's* local time and quietly shift a whole day's bucket."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(tz).date()
+
+
+def compute_daily_series(interactions: list[dict],
+                          intervention_outcomes: list[dict],
+                          days: int = 14,
+                          end_date: date | None = None,
+                          tz_name: str | None = None,
+                          human_cost: float | None = None,
+                          bot_cost: float | None = None,
+                          rto_cost: float | None = None) -> list[dict]:
+    """Per-day KPI buckets for the dashboard's trend chart, oldest day first.
+
+    Days with no activity are emitted as zero rows rather than skipped, so the chart
+    gets a continuous x-axis instead of a line that silently closes gaps.
+
+    Two savings lines, kept separate because they're the plan's two distinct levers
+    (docs/PROJECT_PLAN.md §3) and the RTO one is the headline:
+      - support: only *deflected* interactions save a human touch, so an escalated
+        interaction contributes nothing — a human still handled it.
+      - RTO: each intervention that resolved to 'delivered' avoided one return trip.
+
+    Bucketing is by local date in the configured business timezone, matching
+    compute_after_hours_pct, so every time-based metric agrees on where a day ends.
+    """
+    human_cost = config.HUMAN_COST_PER_QUERY_PKR if human_cost is None else human_cost
+    bot_cost = config.BOT_COST_PER_QUERY_PKR if bot_cost is None else bot_cost
+    rto_cost = config.RTO_COST_PKR if rto_cost is None else rto_cost
+    tz = ZoneInfo(config.BUSINESS_HOURS_TIMEZONE if tz_name is None else tz_name)
+
+    if end_date is None:
+        end_date = datetime.now(tz).date()
+    bucket_dates = [end_date - timedelta(days=offset) for offset in range(days - 1, -1, -1)]
+    window = set(bucket_dates)
+
+    buckets = {
+        d: {"interactions": 0, "deflected": 0, "escalated": 0,
+            "interventions_resolved": 0, "rto_prevented": 0}
+        for d in bucket_dates
+    }
+
+    for interaction in interactions:
+        day = _local_date(interaction["created_at"], tz)
+        if day not in window:
+            continue
+        bucket = buckets[day]
+        bucket["interactions"] += 1
+        if interaction["escalated"]:
+            bucket["escalated"] += 1
+        else:
+            bucket["deflected"] += 1
+
+    for outcome in intervention_outcomes:
+        day = _local_date(outcome["created_at"], tz)
+        if day not in window:
+            continue
+        bucket = buckets[day]
+        bucket["interventions_resolved"] += 1
+        if outcome["outcome"] == "delivered":
+            bucket["rto_prevented"] += 1
+
+    series = []
+    for day in bucket_dates:
+        bucket = buckets[day]
+        support_saving = bucket["deflected"] * (human_cost - bot_cost)
+        rto_saving = bucket["rto_prevented"] * rto_cost
+        deflection_pct = (
+            round(bucket["deflected"] / bucket["interactions"] * 100, 1)
+            if bucket["interactions"] else 0.0
+        )
+        series.append({
+            "date": day.isoformat(),
+            **bucket,
+            "deflection_rate_pct": deflection_pct,
+            "support_saving_pkr": round(support_saving, 2),
+            "rto_saving_pkr": round(rto_saving, 2),
+            "total_saving_pkr": round(support_saving + rto_saving, 2),
+        })
+    return series
+
+
 def _interaction_to_dict(i: Interaction) -> dict:
     return {
         "escalated": i.escalated,
@@ -103,7 +190,7 @@ def _interaction_to_dict(i: Interaction) -> dict:
 
 
 def _intervention_outcome_to_dict(io: InterventionOutcome) -> dict:
-    return {"outcome": io.outcome}
+    return {"outcome": io.outcome, "created_at": io.created_at}
 
 
 def get_metrics_report(since: datetime | None = None, until: datetime | None = None) -> dict:
@@ -134,4 +221,53 @@ def get_metrics_report(since: datetime | None = None, until: datetime | None = N
         "response_time_ms": compute_response_time(interactions),
         "after_hours_pct": compute_after_hours_pct(interactions),
         "language_reach_pct": compute_language_reach_pct(interactions),
+    }
+
+
+def get_metrics_timeseries(days: int = 14) -> dict:
+    """Daily KPI buckets for the dashboard's trend chart. One query pass over the
+    window — the alternative (N sliding calls to get_metrics_report) would be N full
+    scans of the same two tables.
+
+    The window is bounded by *local* midnight in the business timezone, so the first
+    bucket is a whole day rather than a partial one starting at whatever time the
+    request happened to arrive.
+    """
+    tz = ZoneInfo(config.BUSINESS_HOURS_TIMEZONE)
+    end_date = datetime.now(tz).date()
+    start_date = end_date - timedelta(days=days - 1)
+    start_at = datetime(start_date.year, start_date.month, start_date.day, tzinfo=tz)
+
+    db = SessionLocal()
+    try:
+        interactions = [
+            _interaction_to_dict(i)
+            for i in db.query(Interaction).filter(Interaction.created_at >= start_at).all()
+        ]
+        intervention_outcomes = [
+            _intervention_outcome_to_dict(io)
+            for io in db.query(InterventionOutcome)
+            .filter(InterventionOutcome.created_at >= start_at).all()
+        ]
+    finally:
+        db.close()
+
+    return {
+        "days": days,
+        "timezone": config.BUSINESS_HOURS_TIMEZONE,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        # The exact instant this window opened. The dashboard feeds it straight back
+        # as /metrics/report?since=..., so the KPI cards and the trend chart can never
+        # end up describing different ranges.
+        "start_at": start_at.isoformat(),
+        # Echoed so the dashboard can label the savings lines as the tunable
+        # assumptions they are (docs/PROJECT_PLAN.md §3) rather than as fact.
+        "assumptions": {
+            "human_cost_per_query_pkr": config.HUMAN_COST_PER_QUERY_PKR,
+            "bot_cost_per_query_pkr": config.BOT_COST_PER_QUERY_PKR,
+            "rto_cost_pkr": config.RTO_COST_PKR,
+        },
+        "series": compute_daily_series(interactions, intervention_outcomes,
+                                       days=days, end_date=end_date),
     }

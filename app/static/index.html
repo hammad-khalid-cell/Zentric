@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zentric — Ops Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<!-- The ops API is token-gated (app/core/auth.py). Nothing below renders until a
+     valid DASHBOARD_TOKEN is supplied; the token lives in sessionStorage only. -->
+<div class="gate" id="gate">
+  <div class="card">
+    <h1>Zentric Ops</h1>
+    <p>Read-only dashboard. Enter the ops token to continue.</p>
+    <form id="gate-form">
+      <input type="password" id="token-input" placeholder="DASHBOARD_TOKEN" autocomplete="off" autofocus>
+      <button class="btn" type="submit">Open dashboard</button>
+    </form>
+    <div class="error" id="gate-error"></div>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="brand">Zentric <span>· Ops</span></div>
+  <div class="spacer"></div>
+  <div class="live" id="live" data-state="live">
+    <span class="live-dot"></span><span id="live-text">Live</span>
+  </div>
+  <button class="btn ghost" id="theme-toggle" type="button">Theme</button>
+  <button class="btn ghost" id="sign-out" type="button">Sign out</button>
+</header>
+
+<main>
+  <!-- Performance: one filter row scoping the tiles AND both charts, so the cards
+       and the trend always describe the same window. -->
+  <section>
+    <div class="section-head">
+      <h2>Performance</h2>
+      <p id="range-note"></p>
+      <div class="filter-row">
+        <span class="label">Range</span>
+        <div class="seg" id="range-seg" role="group" aria-label="Date range">
+          <button type="button" data-days="7" aria-pressed="false">7 days</button>
+          <button type="button" data-days="14" aria-pressed="true">14 days</button>
+          <button type="button" data-days="30" aria-pressed="false">30 days</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpi-grid" id="kpi-grid"></div>
+
+    <div class="chart-grid">
+      <div class="card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Savings per day</div>
+            <div class="chart-sub">PKR, split by lever</div>
+          </div>
+          <button class="toggle" type="button" data-table-toggle="savings">Table</button>
+        </div>
+        <div class="legend">
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--series-1)"></span>Support deflection</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--series-2)"></span>RTO prevented</span>
+        </div>
+        <div class="plot" id="chart-savings"></div>
+        <div class="table-scroll" id="table-savings" hidden></div>
+      </div>
+
+      <div class="card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Deflection rate</div>
+            <div class="chart-sub">% of interactions resolved without a human</div>
+          </div>
+          <button class="toggle" type="button" data-table-toggle="deflection">Table</button>
+        </div>
+        <div class="plot" id="chart-deflection"></div>
+        <div class="table-scroll" id="table-deflection" hidden></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>ROI model</h2>
+      <p>Parameterised — move any input and the projection follows.</p>
+    </div>
+    <div class="roi-grid">
+      <div class="card">
+        <div class="roi-inputs" id="roi-inputs"></div>
+        <div class="measured" id="roi-measured"></div>
+      </div>
+      <div class="card">
+        <div class="hero-label">Projected annual saving</div>
+        <div class="hero" id="roi-hero">—</div>
+        <div class="hero-sub" id="roi-hero-sub"></div>
+        <div class="lever-split" id="roi-levers"></div>
+        <div class="table-scroll" id="roi-funnel"></div>
+        <div class="note" id="roi-note"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Operations</h2>
+      <p>Live conversations and every business-affecting action, as recorded.</p>
+    </div>
+    <div class="ops-grid">
+      <div class="card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Conversations</div>
+            <div class="chart-sub" id="convo-sub">WhatsApp threads, newest activity first</div>
+          </div>
+        </div>
+        <div class="convo-layout">
+          <div class="convo-list" id="convo-list"></div>
+          <div class="thread" id="thread"><div class="empty">Select a conversation.</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Cases</div>
+            <div class="chart-sub">Escalations, reroutes, and corrective interventions</div>
+          </div>
+          <div class="filter-row">
+            <div class="seg" id="case-seg" role="group" aria-label="Case type">
+              <button type="button" data-type="" aria-pressed="true">All</button>
+              <button type="button" data-type="ticket" aria-pressed="false">Tickets</button>
+              <button type="button" data-type="reroute" aria-pressed="false">Reroutes</button>
+              <button type="button" data-type="intervention" aria-pressed="false">Interventions</button>
+            </div>
+          </div>
+        </div>
+        <div class="table-scroll" id="cases"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

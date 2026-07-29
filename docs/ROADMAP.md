@@ -6,7 +6,7 @@
 > progress · `[x]` done. Priorities: **P0** (blocks the value prop) · P1 (makes it
 > worth it / defensible) · P2 (robustness & polish).
 
-Last updated: 2026-07-26 (Phase 2 — proactive loop closed).
+Last updated: 2026-07-29 (Phase 4 — ops dashboard UI, ROI model, ops API).
 
 ---
 
@@ -103,17 +103,93 @@ defense, never as fact, per `docs/PROJECT_PLAN.md` §3.
 
 ---
 
-## Phase 4 — Ops / KPI dashboard (frontend) — P1
+## Phase 4 — Ops / KPI dashboard (frontend) — P1 — 🚧 in progress
 
 Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization.
 
-- [ ] Conversation view (per customer, in/out thread from `messages`)
-- [ ] Tickets / reroutes / interventions list with status
-- [ ] KPI panel wired to the metrics service (cards + trend)
-- [ ] Live ROI calculator (plug in volume/COD%/failure rate/agent cost → savings)
-- [ ] Read-only auth for the dashboard
+**Decisions taken** (so a later session doesn't relitigate them):
+- **Frontend:** no-build static SPA in `app/static/`, served by FastAPI at `/dashboard`;
+  vanilla JS, hand-rolled inline SVG charts, no CDN (the defense machine may be offline).
+  One process, one URL, nothing to `npm build` on demo morning.
+- **Live updates:** polling with an id cursor (~4s conversations/cases, ~20s KPIs),
+  *not* websockets — the demo runs `app.tools.sim` / `simulate_outcomes` / the proactive
+  scanner as **separate processes**, so any in-process pub/sub would never see them.
+  Postgres is the only shared state. Survives the Phase 7 swap unchanged; SSE is a
+  later drop-in.
+- **ROI model:** computed server-side and pytest-tested — it's a business claim we
+  defend, so it must be one deterministic implementation, not duplicated in JS.
+- **No new tables and no `state.py` change** this phase: it's read-only over what
+  Phases 1–3 already record.
 
-**Acceptance:** open the dashboard, watch a live conversation and the KPIs update.
+### Backend (read-only ops API)
+
+- [x] Read-only auth for the dashboard — `app/core/auth.py`, shared `DASHBOARD_TOKEN`
+      bearer token, **fails closed with 503 when unset**. Gates `/ops/*` *and*
+      `/metrics/report`. Rationale: an unauthenticated per-phone read would be exactly
+      the ownership oracle `PROJECT_PLAN.md` §5.3 forbids; the customer-facing
+      ownership check in `tracking_agent.py` is untouched.
+- [x] `GET /ops/conversations` — per-customer summary (counts, last message,
+      `last_message_id` as the poll cursor)
+- [x] `GET /ops/conversations/{phone}` — in/out thread, `since_id` for incremental polls
+- [x] `GET /ops/cases` — tickets + reroutes + interventions as one normalised feed,
+      filterable by `type`/`status`. An **intervention's status is derived** (`open` /
+      `delivered` / `still_failed`) from whether an `InterventionOutcome` exists — no
+      status column, no schema change.
+- [x] Tests: auth gate (fail-closed, bad headers, constant-time compare), derived
+      status, case merge/filter/limit, thread ordering + cursor, route validation
+      (28 new, 163 total)
+- [x] `GET /metrics/timeseries?days=N` — daily buckets for the trend chart, pure
+      `compute_daily_series` beside the existing `compute_*` fns (N sliding calls to
+      `/metrics/report` would be N full table scans). Zero-fills quiet days so the
+      chart's x-axis stays continuous; buckets by *local* Asia/Karachi date so it
+      agrees with the after-hours metric; splits the two savings levers
+      (`support_saving_pkr` credits only deflected interactions — an escalated one
+      still cost a human — and `rto_saving_pkr`)
+- [x] `GET /ops/roi/assumptions` + `POST /ops/roi/simulate` — `app/services/roi_service.py`,
+      pure + pytest-tested. Its defaults **re-derive the §3 savings table** (~PKR 36M
+      support, ~PKR 65M RTO, RTO ≈ 1.9× support), and a test asserts that, so the plan
+      doc and the calculator can't drift apart and quote different headlines.
+      `/roi/assumptions` reports the system's *measured* deflection/success rates
+      **separately from** the model defaults and **with sample sizes** — right now that's
+      100% off n=3 and n=1, which must look as weak as it is rather than authoritative.
+- [ ] `proactive_notifier` doesn't pass `tracking_number` to `send_whatsapp_message`
+      (`proactive_notifier.py:79`), so proactive outbound rows land in `messages` with a
+      null tracking number and the dashboard thread can't say which parcel they're about
+      — one-line fix, found while smoke-testing the ops API
+
+### Frontend — `app/static/`, served at `/dashboard`
+
+- [x] Conversation view (per customer, in/out thread from `messages`), polled with the
+      `since_id` cursor so a live thread costs one small query per tick
+- [x] Tickets / reroutes / interventions list with status + type filter
+- [x] KPI panel wired to the metrics service (6 stat tiles + 2 charts). The range
+      control scopes tiles *and* charts: the trend defines the window and hands its
+      `start_at` to `/metrics/report`, so the cards and the chart can't disagree
+- [x] Live ROI calculator (10 sliders → savings), labelled **illustrative & tunable**
+      per `PROJECT_PLAN.md` §3 — never presented as fact
+- [x] Browser customer simulator page at `/simulator` — posts to the existing
+      `/webhook/whatsapp` (customer surface, no new backend, `send_whatsapp_message()`
+      seam untouched) so the "live" demo has a traffic source on the same screen
+- [ ] **Spread the demo dataset over several days** — every `Interaction` /
+      `InterventionOutcome` currently lands on the day it was generated, so the trend
+      chart is one bar beside flat zeros. `simulate_outcomes` relies on the `created_at`
+      server default; backdating needs explicit timestamps. **Do this before the defense
+      or the trend panel has nothing to show.**
+- [ ] Eyeball the rendered dashboard in a browser (no browser tooling was available in
+      the build session — field contracts and JS syntax were verified headlessly)
+
+**Charts** follow the dataviz method: two categorical slots (blue = support lever,
+orange = RTO lever, validated in both light and dark — worst adjacent CVD ΔE 24.7/26.8),
+colour follows the entity so a filter never repaints it, no dual axis (savings and
+deflection rate are two charts, not two scales), 2px surface gaps rather than strokes,
+selective direct labels, a table-view twin behind every chart, crosshair/hover tooltips
+with ≥24px hit targets, and status shown as icon + label rather than colour alone.
+
+**Acceptance:** ✅ open the dashboard, watch a live conversation and the KPIs update.
+
+**One-time setup after pulling:** no migration this phase, but set `DASHBOARD_TOKEN`
+in `.env` — without it the ops API and `/metrics/report` return 503 by design. Then
+`uvicorn app.main:app` and open `/dashboard` (ops) and `/simulator` (customer side).
 
 ---
 
@@ -162,6 +238,14 @@ Backs the safety/quality claims with evidence.
 
 ## Discovered / parking lot
 
+- [ ] Link `messages` to `interactions` (shared id) so the dashboard can show latency
+      per reply instead of correlating by phone + timestamp — noted while building Phase 4
+- [ ] **The test suite depends on live network** despite `tests/conftest.py` claiming
+      otherwise: `vector_store` builds a real Chroma Cloud client at import time, and
+      `decision_making_node` opens a real Supabase Postgres connection. Intermittent DNS
+      failures (`Temporary failure in name resolution`) make full runs fail and pass at
+      random while individual files are fine. Same root cause as the Phase 0 dummy-env
+      fixture item — worth doing together, and it's a hard CI blocker.
 - [ ] Roman-Urdu code-switched labeled dataset + classification accuracy report (optional novelty artifact)
 - [ ] Merchant-facing notifications (COD sale protected)
 - [ ] Address geocoding/validation
