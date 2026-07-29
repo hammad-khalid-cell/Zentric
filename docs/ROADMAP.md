@@ -6,7 +6,7 @@
 > progress · `[x]` done. Priorities: **P0** (blocks the value prop) · P1 (makes it
 > worth it / defensible) · P2 (robustness & polish).
 
-Last updated: 2026-07-27 (Phase 4 — read-only ops API + dashboard auth).
+Last updated: 2026-07-27 (Phase 4 — ops dashboard UI, ROI model, ops API).
 
 ---
 
@@ -157,26 +157,39 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
       null tracking number and the dashboard thread can't say which parcel they're about
       — one-line fix, found while smoke-testing the ops API
 
-### Frontend
+### Frontend — `app/static/`, served at `/dashboard`
 
-- [ ] Conversation view (per customer, in/out thread from `messages`)
-- [ ] Tickets / reroutes / interventions list with status
-- [ ] KPI panel wired to the metrics service (cards + trend)
-- [ ] Live ROI calculator (volume/COD%/failure rate/agent cost → savings), labelled
-      **illustrative & tunable** per `PROJECT_PLAN.md` §3 — never presented as fact
+- [x] Conversation view (per customer, in/out thread from `messages`), polled with the
+      `since_id` cursor so a live thread costs one small query per tick
+- [x] Tickets / reroutes / interventions list with status + type filter
+- [x] KPI panel wired to the metrics service (6 stat tiles + 2 charts). The range
+      control scopes tiles *and* charts: the trend defines the window and hands its
+      `start_at` to `/metrics/report`, so the cards and the chart can't disagree
+- [x] Live ROI calculator (10 sliders → savings), labelled **illustrative & tunable**
+      per `PROJECT_PLAN.md` §3 — never presented as fact
+- [x] Browser customer simulator page at `/simulator` — posts to the existing
+      `/webhook/whatsapp` (customer surface, no new backend, `send_whatsapp_message()`
+      seam untouched) so the "live" demo has a traffic source on the same screen
 - [ ] **Spread the demo dataset over several days** — every `Interaction` /
       `InterventionOutcome` currently lands on the day it was generated, so the trend
-      chart is one spike beside flat zeros. `simulate_outcomes` relies on the
-      `created_at` server default; backdating needs explicit timestamps. Do this before
-      the defense or the trend panel has nothing to show.
-- [ ] Browser customer simulator page — posts to the existing `/webhook/whatsapp`
-      (customer surface, no new backend, `send_whatsapp_message()` seam untouched) so
-      the "live" demo has a traffic source on the same screen
+      chart is one bar beside flat zeros. `simulate_outcomes` relies on the `created_at`
+      server default; backdating needs explicit timestamps. **Do this before the defense
+      or the trend panel has nothing to show.**
+- [ ] Eyeball the rendered dashboard in a browser (no browser tooling was available in
+      the build session — field contracts and JS syntax were verified headlessly)
 
-**Acceptance:** open the dashboard, watch a live conversation and the KPIs update.
+**Charts** follow the dataviz method: two categorical slots (blue = support lever,
+orange = RTO lever, validated in both light and dark — worst adjacent CVD ΔE 24.7/26.8),
+colour follows the entity so a filter never repaints it, no dual axis (savings and
+deflection rate are two charts, not two scales), 2px surface gaps rather than strokes,
+selective direct labels, a table-view twin behind every chart, crosshair/hover tooltips
+with ≥24px hit targets, and status shown as icon + label rather than colour alone.
+
+**Acceptance:** ✅ open the dashboard, watch a live conversation and the KPIs update.
 
 **One-time setup after pulling:** no migration this phase, but set `DASHBOARD_TOKEN`
-in `.env` — without it the ops API and `/metrics/report` return 503 by design.
+in `.env` — without it the ops API and `/metrics/report` return 503 by design. Then
+`uvicorn app.main:app` and open `/dashboard` (ops) and `/simulator` (customer side).
 
 ---
 

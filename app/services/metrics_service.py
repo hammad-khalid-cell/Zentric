@@ -257,6 +257,10 @@ def get_metrics_timeseries(days: int = 14) -> dict:
         "timezone": config.BUSINESS_HOURS_TIMEZONE,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
+        # The exact instant this window opened. The dashboard feeds it straight back
+        # as /metrics/report?since=..., so the KPI cards and the trend chart can never
+        # end up describing different ranges.
+        "start_at": start_at.isoformat(),
         # Echoed so the dashboard can label the savings lines as the tunable
         # assumptions they are (docs/PROJECT_PLAN.md §3) rather than as fact.
         "assumptions": {

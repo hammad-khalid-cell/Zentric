@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zentric — Customer Simulator</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .sim-wrap { max-width: 620px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 12px; }
+    .sim-row { display: flex; gap: 8px; }
+    .sim-row input { flex: 1; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); }
+    .sim-thread { display: flex; flex-direction: column; gap: 8px; min-height: 220px; max-height: 55vh; overflow-y: auto; }
+    .quick { display: flex; flex-wrap: wrap; gap: 6px; }
+    .quick button { border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); border-radius: 999px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+    .quick button:hover { background: var(--surface-2); }
+  </style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">Zentric <span>· Customer simulator</span></div>
+  <div class="spacer"></div>
+  <a class="btn ghost" href="/dashboard" style="text-decoration:none">Dashboard</a>
+</header>
+
+<div class="sim-wrap">
+  <div class="card">
+    <div class="chart-title">Send as a customer</div>
+    <div class="chart-sub" style="margin-bottom:12px">
+      Posts a Meta-shaped payload to <span class="mono">/webhook/whatsapp</span> — the same
+      endpoint the real Cloud API will call. No ops token needed: this is the customer
+      side, not the ops side.
+    </div>
+    <div class="sim-row" style="margin-bottom:8px">
+      <input id="phone" value="923001234567" aria-label="Customer phone number" inputmode="numeric">
+    </div>
+    <form class="sim-row" id="send-form" style="margin-bottom:10px">
+      <input id="message" placeholder="TRK12345 status?" autocomplete="off" autofocus aria-label="Message">
+      <button class="btn" type="submit" id="send-btn">Send</button>
+    </form>
+    <div class="quick" id="quick"></div>
+    <div class="error" id="error"></div>
+  </div>
+
+  <div class="card">
+    <div class="chart-title" style="margin-bottom:10px">Conversation</div>
+    <div class="sim-thread" id="thread">
+      <div class="empty">Send a message to start the loop.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const QUICK_MESSAGES = [
+    "TRK12345 status?",
+    "Mera parcel kahan hai?",
+    "Meri delivery late kyun hai?",
+    "Address change karna hai: House 15, Gulshan-e-Iqbal, Karachi",
+    "Kal shaam ko bhej dein",
+    "What are your delivery hours?",
+  ];
+
+  const $ = (id) => document.getElementById(id);
+  const thread = $("thread");
+
+  function bubble(text, direction) {
+    thread.querySelectorAll(".empty").forEach((n) => n.remove());
+    const node = document.createElement("div");
+    node.className = `bubble ${direction}`;
+    node.textContent = text;                 // untrusted text — never innerHTML
+    thread.appendChild(node);
+    thread.scrollTop = thread.scrollHeight;
+    return node;
+  }
+
+  /** The exact payload shape app/routes/whatsapp_routes.py parses. */
+  function metaPayload(from, text) {
+    return {
+      object: "whatsapp_business_account",
+      entry: [{ changes: [{ field: "messages", value: {
+        messaging_product: "whatsapp",
+        messages: [{ from, type: "text", text: { body: text } }],
+      } }] }],
+    };
+  }
+
+  async function send(text) {
+    const phone = $("phone").value.trim();
+    if (!phone || !text) return;
+    $("error").textContent = "";
+    bubble(text, "out");                     // the customer's own side, right-aligned
+    $("message").value = "";
+    $("send-btn").disabled = true;
+    const pending = bubble("…", "in");
+    try {
+      const response = await fetch("/webhook/whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(metaPayload(phone, text)),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const reply = (data.replies && data.replies[0] && data.replies[0].reply) || "(no reply)";
+      pending.textContent = reply;
+    } catch (error) {
+      pending.remove();
+      $("error").textContent = `Could not reach the webhook: ${error.message}`;
+    } finally {
+      $("send-btn").disabled = false;
+      $("message").focus();
+    }
+  }
+
+  $("send-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    send($("message").value.trim());
+  });
+
+  for (const text of QUICK_MESSAGES) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = text;
+    button.addEventListener("click", () => send(text));
+    $("quick").appendChild(button);
+  }
+
+  const savedTheme = localStorage.getItem("zentric_theme");
+  if (savedTheme) document.documentElement.setAttribute("data-theme", savedTheme);
+})();
+</script>
+</body>
+</html>

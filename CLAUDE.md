@@ -72,6 +72,21 @@ set — see `app/core/auth.py`.
 garbled/space-separated text. Preserve the encoding if editing it directly, or regenerate it with
 `pip freeze`.
 
+## Ops dashboard (Phase 4)
+
+`app/static/` is a **no-build** static app (vanilla JS, hand-rolled inline SVG charts, no
+CDN) served by this same FastAPI process — `GET /dashboard` for the ops view, `GET
+/simulator` for the customer-side simulator. There is no npm toolchain; edit the files and
+reload. It reads the token-gated `/ops/*` + `/metrics/*` endpoints and **never writes**:
+the only non-GET is `POST /ops/roi/simulate`, which is pure computation. Live updates are
+**polled** (4s ops / 20s KPIs, id-cursor for threads), because the traffic sources
+(`app.tools.sim`, `simulate_outcomes`, the proactive notifier) run as separate processes —
+an in-process event bus would never see them.
+
+Charts follow the `dataviz` skill's method; the two series colours (blue = support lever,
+orange = RTO lever) are validated for both light and dark mode. If you add a chart, load
+that skill first rather than picking colours ad hoc.
+
 ## Architecture
 
 The core of the app is a LangGraph state machine, not a typical request/response controller layout.
