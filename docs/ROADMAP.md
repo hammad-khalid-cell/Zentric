@@ -20,7 +20,10 @@ Last updated: 2026-07-29 (Phase 4 — ops dashboard UI, ROI model, ops API).
 - [x] Refactor data retrieval into `app/agents/tracking_agent.py`
 - [x] Fix `memory_save_node` returning `None`; remove duplicate graph edge
 - [x] pytest suite (70 tests) + `docs`-style TEST_REPORT
-- [ ] Wire an autouse dummy-env fixture so tests run in CI without real secrets (P2)
+- [ ] Wire an autouse dummy-env fixture so tests run in CI without real secrets (P2).
+      *Narrowed:* the suite is now genuinely offline (see parking lot), but importing
+      `app.core.config` still **raises** without real credentials in `.env`, so CI needs
+      dummy values injected before collection. That's all that's left of this item.
 
 ---
 
@@ -240,12 +243,14 @@ Backs the safety/quality claims with evidence.
 
 - [ ] Link `messages` to `interactions` (shared id) so the dashboard can show latency
       per reply instead of correlating by phone + timestamp — noted while building Phase 4
-- [ ] **The test suite depends on live network** despite `tests/conftest.py` claiming
-      otherwise: `vector_store` builds a real Chroma Cloud client at import time, and
-      `decision_making_node` opens a real Supabase Postgres connection. Intermittent DNS
-      failures (`Temporary failure in name resolution`) make full runs fail and pass at
-      random while individual files are fine. Same root cause as the Phase 0 dummy-env
-      fixture item — worth doing together, and it's a hard CI blocker.
+- [x] **The test suite depended on live network** despite `tests/conftest.py` claiming
+      otherwise. Three causes, all fixed: `vector_store` built its Chroma Cloud client at
+      *import* time (so a DNS blip failed collection of modules that never touch RAG — it's
+      lazy now), `decision_making_node`'s `record_attempt_outcome` opened a real Postgres
+      connection in `test_decision.py`, and LangSmith tracing phoned home on every graph
+      invoke. `conftest.py` now **enforces** offline with an autouse socket block, so this
+      class of regression fails loudly at the call site instead of intermittently. 209
+      passed in 5.6s with no network. Opt out per-test with `@pytest.mark.allow_network`.
 - [ ] Roman-Urdu code-switched labeled dataset + classification accuracy report (optional novelty artifact)
 - [ ] Merchant-facing notifications (COD sale protected)
 - [ ] Address geocoding/validation
