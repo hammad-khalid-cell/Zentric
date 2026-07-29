@@ -227,9 +227,12 @@ Backs the safety/quality claims with evidence.
 
 - [ ] Link `messages` to `interactions` (shared id) so the dashboard can show latency
       per reply instead of correlating by phone + timestamp — noted while building Phase 4
-- [ ] Tests hit **real Chroma Cloud at import time** (`vector_store` builds its client
-      on import), so collection fails on a flaky network despite `tests/conftest.py`
-      claiming no external calls — same root cause as the Phase 0 dummy-env fixture item
+- [ ] **The test suite depends on live network** despite `tests/conftest.py` claiming
+      otherwise: `vector_store` builds a real Chroma Cloud client at import time, and
+      `decision_making_node` opens a real Supabase Postgres connection. Intermittent DNS
+      failures (`Temporary failure in name resolution`) make full runs fail and pass at
+      random while individual files are fine. Same root cause as the Phase 0 dummy-env
+      fixture item — worth doing together, and it's a hard CI blocker.
 - [ ] Roman-Urdu code-switched labeled dataset + classification accuracy report (optional novelty artifact)
 - [ ] Merchant-facing notifications (COD sale protected)
 - [ ] Address geocoding/validation
