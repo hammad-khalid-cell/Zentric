@@ -175,11 +175,20 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
 - [x] Browser customer simulator page at `/simulator` — posts to the existing
       `/webhook/whatsapp` (customer surface, no new backend, `send_whatsapp_message()`
       seam untouched) so the "live" demo has a traffic source on the same screen
-- [ ] **Spread the demo dataset over several days** — every `Interaction` /
-      `InterventionOutcome` currently lands on the day it was generated, so the trend
-      chart is one bar beside flat zeros. `simulate_outcomes` relies on the `created_at`
-      server default; backdating needs explicit timestamps. **Do this before the defense
-      or the trend panel has nothing to show.**
+- [x] **Spread the demo dataset over several days** — `python -m app.tools.seed_demo_history`
+      writes backdated `Interaction` / `Message` / `Intervention` / `DeliveryAttempt` /
+      `InterventionOutcome` chains with explicit `created_at` (the server default was why
+      everything piled onto one day). Generation is split into a pure, seeded
+      `plan_history()` and a `write_plan()` that only inserts, so the shape is testable
+      without a DB (`tests/test_seed_demo_history.py`, 11 new). Weekday/weekend volume
+      shape and a real after-hours tail; **no artificial growth ramp** — a fabricated
+      adoption curve would claim something the system hasn't earned. Defaults to **18**
+      days because history ends *yesterday*, so a 14-day generation is already missing
+      its oldest bucket and sheds one more per day; the extra days are slack.
+      All 14 chart buckets now populated (deflection 33–100%/day, RTO 76.5% off n=34).
+      ⚠️ **This is MODELLED history, not observed** — rows are marked (`DEMO`-prefixed
+      tracking numbers, reserved `92300900xxxx` phones), removable with `--wipe`, and must
+      be presented as modelled, exactly like `RTO_COST_PKR` (`PROJECT_PLAN.md` §3).
 - [ ] Eyeball the rendered dashboard in a browser (no browser tooling was available in
       the build session — field contracts and JS syntax were verified headlessly)
 
