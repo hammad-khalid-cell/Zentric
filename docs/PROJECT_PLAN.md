@@ -6,7 +6,7 @@
 > `CLAUDE.md` holds the technical/codebase guide. When those conflict with a
 > passing thought, **this file and ROADMAP win** — re-read before large changes.
 
-Last meaningful update: 2026-07-26.
+Last meaningful update: 2026-07-29.
 
 ---
 

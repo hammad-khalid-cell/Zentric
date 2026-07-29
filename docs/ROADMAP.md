@@ -6,7 +6,7 @@
 > progress · `[x]` done. Priorities: **P0** (blocks the value prop) · P1 (makes it
 > worth it / defensible) · P2 (robustness & polish).
 
-Last updated: 2026-07-27 (Phase 4 — ops dashboard UI, ROI model, ops API).
+Last updated: 2026-07-29 (Phase 4 — ops dashboard UI, ROI model, ops API).
 
 ---
 
