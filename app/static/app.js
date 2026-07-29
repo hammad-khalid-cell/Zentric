@@ -30,6 +30,7 @@
     caseType: "",
     selectedPhone: null,
     threadCursor: null,
+    convoSignature: null,   // cheap change-detect so the poll doesn't rebuild an unchanged list
     series: [],
     roiDefaults: null,
     roiInputs: {},
@@ -520,6 +521,17 @@
 
   function renderConversations(conversations) {
     const list = $("convo-list");
+
+    // The list is a 420px scroll box refreshed every 4s. Tearing it down and
+    // rebuilding it unconditionally reset the reader's scroll position (and dropped
+    // keyboard focus) on every tick — unusable once there are more threads than fit.
+    // Nothing but the rows themselves changes here, so skip the rebuild when the data
+    // is identical, and preserve scroll across the rebuilds that do happen.
+    const signature = conversations.map((c) => `${c.customer_phone}:${c.last_message_id}`).join("|");
+    if (signature === state.convoSignature) return;
+    state.convoSignature = signature;
+    const scrollTop = list.scrollTop;
+
     clear(list);
     if (!conversations.length) {
       list.appendChild(el("div", { class: "empty", text: "No conversations yet." }));
@@ -537,9 +549,10 @@
           text: `${convo.last_direction === "out" ? "→ " : "← "}${convo.last_body || ""}`,
         }),
       ]);
-      item.addEventListener("click", () => selectConversation(convo.customer_phone));
+      item.addEventListener("click", () => guarded(() => selectConversation(convo.customer_phone)));
       list.appendChild(item);
     }
+    list.scrollTop = scrollTop;
     $("convo-sub").textContent = `${conversations.length} threads · newest activity first`;
   }
 
@@ -722,7 +735,10 @@
 
   function scheduleRoi() {
     clearTimeout(roiTimer);
-    roiTimer = setTimeout(runRoi, ROI_DEBOUNCE_MS);
+    // Guarded: this fires from a timer with no caller to catch it, so a failed
+    // request would otherwise be an unhandled rejection — the sliders would move and
+    // the figures would silently keep showing the last good result.
+    roiTimer = setTimeout(() => guarded(runRoi), ROI_DEBOUNCE_MS);
   }
 
   async function runRoi() {
@@ -814,6 +830,7 @@
   function signOut(message) {
     stopPolling();
     state.token = "";
+    state.convoSignature = null;   // force a rebuild on the next sign-in
     sessionStorage.removeItem("zentric_token");
     $("gate").hidden = false;
     $("gate-error").textContent = message || "";

@@ -189,8 +189,17 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
       ⚠️ **This is MODELLED history, not observed** — rows are marked (`DEMO`-prefixed
       tracking numbers, reserved `92300900xxxx` phones), removable with `--wipe`, and must
       be presented as modelled, exactly like `RTO_COST_PKR` (`PROJECT_PLAN.md` §3).
-- [ ] Eyeball the rendered dashboard in a browser (no browser tooling was available in
-      the build session — field contracts and JS syntax were verified headlessly)
+- [~] Eyeball the rendered dashboard in a browser — **still open**, no browser tooling
+      available in either session. A code-read pass (the half that doesn't need eyes)
+      found and fixed three things screenshots wouldn't have shown anyway:
+      the conversation list is a 420px scroll box that the 4s poll tore down and rebuilt
+      unconditionally, resetting scroll position and dropping keyboard focus every tick
+      (now change-detected by signature + scroll preserved) — much more visible since the
+      demo history added ~40 threads; and `selectConversation` (click) and `runRoi`
+      (debounce timer) were unguarded async, so a DNS blip left an unhandled rejection
+      with the status pill still reading "Live" (both wrapped in `guarded` now).
+      **Still needs a human to look at it**: layout, dark mode, long Roman-Urdu strings
+      in bubbles, and the charts at real widths.
 
 **Charts** follow the dataviz method: two categorical slots (blue = support lever,
 orange = RTO lever, validated in both light and dark — worst adjacent CVD ΔE 24.7/26.8),
