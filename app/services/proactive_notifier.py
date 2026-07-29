@@ -76,7 +76,11 @@ def scan_and_notify() -> int:
             days_overdue = (date.today() - parcel["expected_delivery_date"]).days
             message = _generate_notification_message(parcel, decision, days_overdue)
 
-            send_whatsapp_message(parcel["customer_phone"], message)
+            # Pass the tracking number through: it's what ties the outbound row in
+            # `messages` to a parcel, so the dashboard thread can say which parcel a
+            # proactive message is about. Without it these rows land with a null
+            # tracking_number and the conversation view shows an unattributed message.
+            send_whatsapp_message(parcel["customer_phone"], message, tracking_number)
 
             # Only "notify" reasons are ones the CUSTOMER can resolve (unavailable,
             # wrong address, reschedule request). Open a pending action for those so

@@ -155,10 +155,12 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
       `/roi/assumptions` reports the system's *measured* deflection/success rates
       **separately from** the model defaults and **with sample sizes** — right now that's
       100% off n=3 and n=1, which must look as weak as it is rather than authoritative.
-- [ ] `proactive_notifier` doesn't pass `tracking_number` to `send_whatsapp_message`
-      (`proactive_notifier.py:79`), so proactive outbound rows land in `messages` with a
-      null tracking number and the dashboard thread can't say which parcel they're about
-      — one-line fix, found while smoke-testing the ops API
+- [x] `proactive_notifier` didn't pass `tracking_number` to `send_whatsapp_message`
+      (`proactive_notifier.py:79`), so proactive outbound rows landed in `messages` with a
+      null tracking number and the dashboard thread couldn't say which parcel they were
+      about — found while smoke-testing the ops API. Fixed, and pinned by the first
+      tests this module has had (`tests/test_proactive_notifier.py`, 5 new): tracking-number
+      propagation, pending action opened for `notify` reasons only, already-notified skip
 
 ### Frontend — `app/static/`, served at `/dashboard`
 
