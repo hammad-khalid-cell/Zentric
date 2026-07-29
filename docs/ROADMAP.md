@@ -145,7 +145,13 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
       agrees with the after-hours metric; splits the two savings levers
       (`support_saving_pkr` credits only deflected interactions — an escalated one
       still cost a human — and `rto_saving_pkr`)
-- [ ] `GET /ops/roi/assumptions` + `POST /ops/roi/simulate` — `app/services/roi_service.py`
+- [x] `GET /ops/roi/assumptions` + `POST /ops/roi/simulate` — `app/services/roi_service.py`,
+      pure + pytest-tested. Its defaults **re-derive the §3 savings table** (~PKR 36M
+      support, ~PKR 65M RTO, RTO ≈ 1.9× support), and a test asserts that, so the plan
+      doc and the calculator can't drift apart and quote different headlines.
+      `/roi/assumptions` reports the system's *measured* deflection/success rates
+      **separately from** the model defaults and **with sample sizes** — right now that's
+      100% off n=3 and n=1, which must look as weak as it is rather than authoritative.
 - [ ] `proactive_notifier` doesn't pass `tracking_number` to `send_whatsapp_message`
       (`proactive_notifier.py:79`), so proactive outbound rows land in `messages` with a
       null tracking number and the dashboard thread can't say which parcel they're about

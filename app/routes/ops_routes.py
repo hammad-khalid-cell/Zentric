@@ -8,9 +8,11 @@ change (`docs/PROJECT_PLAN.md` §5.2), and it is not reachable without the ops t
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.core.auth import require_dashboard_token
-from app.services import ops_read
+from app.services import ops_read, roi_service
+from app.services.metrics_service import get_metrics_report
 
 # Same shape the customer-facing routes validate against (app/routes/test_routes.py) —
 # kept local rather than imported from a route module; a shared validators module is a
@@ -66,3 +68,36 @@ def list_cases(
             detail=f"type must be one of: {', '.join(ops_read.CASE_TYPES)}",
         )
     return {"cases": ops_read.list_cases(case_type=type, status=status, limit=limit)}
+
+
+class RoiRequest(BaseModel):
+    """Every field is optional — the calculator posts only the sliders the panel has
+    touched, and the rest fall back to the model defaults (roi_service.ROI_DEFAULTS)
+    and the configured cost assumptions. Bounds keep a stray keystroke from producing
+    a headline figure the model can't defend."""
+
+    monthly_parcels: int | None = Field(None, ge=0, le=100_000_000)
+    cod_share_pct: float | None = Field(None, ge=0, le=100)
+    first_attempt_failure_rate_pct: float | None = Field(None, ge=0, le=100)
+    preventable_share_pct: float | None = Field(None, ge=0, le=100)
+    intervention_success_rate_pct: float | None = Field(None, ge=0, le=100)
+    wismo_contacts_per_parcel: float | None = Field(None, ge=0, le=20)
+    deflection_rate_pct: float | None = Field(None, ge=0, le=100)
+    human_cost_per_query_pkr: float | None = Field(None, ge=0, le=100_000)
+    bot_cost_per_query_pkr: float | None = Field(None, ge=0, le=100_000)
+    rto_cost_pkr: float | None = Field(None, ge=0, le=1_000_000)
+
+
+@router.get("/roi/assumptions")
+def roi_assumptions():
+    """What the ROI calculator loads with: the model defaults, plus what the system
+    has measured about itself (with sample sizes, reported separately — see
+    roi_service.get_roi_assumptions)."""
+    return roi_service.get_roi_assumptions(measured=get_metrics_report())
+
+
+@router.post("/roi/simulate")
+def roi_simulate(payload: RoiRequest):
+    """Project savings from the panel's inputs. A POST for the request body only —
+    this is pure computation and writes nothing, so the ops surface stays read-only."""
+    return roi_service.simulate(payload.model_dump(exclude_unset=True))
