@@ -199,7 +199,11 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
       (debounce timer) were unguarded async, so a DNS blip left an unhandled rejection
       with the status pill still reading "Live" (both wrapped in `guarded` now).
       **Still needs a human to look at it**: layout, dark mode, long Roman-Urdu strings
-      in bubbles, and the charts at real widths.
+      in bubbles, and the charts at real widths. Attempted again 2026-07-31 with browser
+      tooling available, but the Chrome extension wasn't connected — deferred by
+      decision, not blocked on code. Everything *checkable* without eyes now is: all
+      pages and assets serve 200, every ops endpoint returns data, and an
+      unauthenticated `/ops/*` read is refused with 401.
 
 **Charts** follow the dataviz method: two categorical slots (blue = support lever,
 orange = RTO lever, validated in both light and dark — worst adjacent CVD ΔE 24.7/26.8),
@@ -277,13 +281,17 @@ in `.env` — without it the ops API and `/metrics/report` return 503 by design.
       (**the read token cannot write** — the load-bearing auth test — plus attribution,
       409s, and a structural guard that no mutating route lands in the read router).
 
-**Acceptance:** ✅ an escalation raises a handoff and alerts staff; taking it on the
-dashboard silences the bot for that customer; resolving it hands the thread back.
+**Acceptance:** ✅ **verified end-to-end against the live stack** (2026-07-31), not just
+in unit tests. Escalation raises a handoff and notifies staff → an *open* handoff does
+**not** suppress the bot → the read token is refused on claim (401) → claiming with the
+write token suppresses → a second claim is a 409, not a silent rewrite → an inbound
+message during suppression is **logged but not answered** → a blank actor is a 422 →
+resolving hands the thread back and the bot replies again. All 19 checks passed.
 
 **One-time setup after pulling:** `python -m app.core.create_tables` for the new
 `handoffs` table, then set `DASHBOARD_WRITE_TOKEN` (a *different* value from
 `DASHBOARD_TOKEN`) — without it the handoff buttons return 503 by design. See
-**`docs/MIGRATIONS.md`**.
+**`docs/MIGRATIONS.md`**. *(Both already done on the dev machine.)*
 
 ---
 
