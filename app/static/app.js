@@ -17,8 +17,12 @@
 (() => {
   "use strict";
 
-  const POLL_OPS_MS = 4000;      // conversations + cases + open thread
-  const POLL_PERF_MS = 20000;    // KPI tiles + trend (heavier queries)
+  // Three tiers, by how fast the underlying data actually changes and how expensive it
+  // is to ask. Putting everything on one 4s tick meant re-running a GROUP BY over the
+  // whole messages table and a three-table case merge every four seconds, forever.
+  const POLL_CONVO_MS = 4000;    // conversation list + open thread — the live surface
+  const POLL_CASES_MS = 10000;   // cases + handoffs — change only when something escalates
+  const POLL_PERF_MS = 20000;    // KPI tiles + trend (heaviest queries)
   const ROI_DEBOUNCE_MS = 150;
   const TZ = "Asia/Karachi";     // matches BUSINESS_HOURS_TIMEZONE server-side
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -38,7 +42,8 @@
     series: [],
     roiDefaults: null,
     roiInputs: {},
-    timers: [],
+    timers: {},        // one pending timeout per poll tier, keyed by name
+    polling: false,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -764,16 +769,25 @@
     renderHandoffs(payload.handoffs);
   }
 
-  async function refreshOps() {
-    const typeQuery = state.caseType ? `?type=${state.caseType}&limit=50` : "?limit=50";
-    const [conversations, cases] = await Promise.all([
-      api("/ops/conversations?limit=50"),
-      api(`/ops/cases${typeQuery}`),
-    ]);
+  /** Fast tier: the live conversation surface. */
+  async function refreshConversations() {
+    const conversations = await api("/ops/conversations?limit=50");
     renderConversations(conversations.conversations);
+    await pollThread();
+  }
+
+  /** Medium tier: only changes when something escalates or a corrective action lands. */
+  async function refreshCaseFeed() {
+    const typeQuery = state.caseType ? `?type=${state.caseType}&limit=50` : "?limit=50";
+    const cases = await api(`/ops/cases${typeQuery}`);
     renderCases(cases.cases);
     await refreshHandoffs();
-    await pollThread();
+  }
+
+  /** Everything — initial load and returning to the tab, where staleness is likeliest. */
+  async function refreshOps() {
+    await refreshConversations();
+    await refreshCaseFeed();
   }
 
   // --- ROI calculator ----------------------------------------------------
@@ -918,19 +932,32 @@
     }
   }
 
+  /** Self-scheduling poll: the next run is booked only once the previous one has
+   *  finished, so the gap is measured from completion rather than from a fixed wall
+   *  clock. setInterval did the latter and never awaited the request, so whenever the
+   *  database was slower than the interval — routine here, the pooler is remote and
+   *  this machine drops DNS — ticks overlapped and in-flight requests piled up
+   *  without bound. One request per tier is in flight at a time now. */
+  function pollLoop(name, task, delay) {
+    state.timers[name] = setTimeout(async () => {
+      if (!state.polling) return;
+      if (!document.hidden) await guarded(task);
+      if (state.polling) pollLoop(name, task, delay);
+    }, delay);
+  }
+
   function startPolling() {
     stopPolling();
-    state.timers.push(setInterval(() => {
-      if (!document.hidden) guarded(refreshOps);
-    }, POLL_OPS_MS));
-    state.timers.push(setInterval(() => {
-      if (!document.hidden) guarded(refreshPerformance);
-    }, POLL_PERF_MS));
+    state.polling = true;
+    pollLoop("conversations", refreshConversations, POLL_CONVO_MS);
+    pollLoop("cases", refreshCaseFeed, POLL_CASES_MS);
+    pollLoop("performance", refreshPerformance, POLL_PERF_MS);
   }
 
   function stopPolling() {
-    state.timers.forEach(clearInterval);
-    state.timers = [];
+    state.polling = false;   // also stops a loop whose timer has already fired
+    Object.values(state.timers).forEach(clearTimeout);
+    state.timers = {};
   }
 
   document.addEventListener("visibilitychange", () => {
@@ -1015,7 +1042,7 @@
     state.caseType = button.dataset.type;
     $("case-seg").querySelectorAll("button").forEach((b) =>
       b.setAttribute("aria-pressed", String(b === button)));
-    guarded(refreshOps);
+    guarded(refreshCaseFeed);   // only the case feed changed — don't re-poll everything
   });
 
   document.querySelectorAll("[data-table-toggle]").forEach((button) => {
