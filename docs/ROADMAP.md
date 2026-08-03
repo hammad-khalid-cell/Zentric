@@ -273,7 +273,8 @@ in `.env` — without it the ops API and `/metrics/report` return 503 by design.
       never inflates the deflection rate. `HANDOFF_TTL_HOURS` (default 8, one shift)
       lazily expires an abandoned claim so a human who walks away can't silence the bot
       for that customer forever.
-- [x] Tests: handoff routing + bot suppression — 62 new (287 total).
+- [x] Tests: handoff routing + bot suppression — 62 new (295 total, incl.
+      `test_offline_guard.py` covering the conftest network block itself).
       `test_handoff.py` (store lifecycle, idempotency, expiry sweep, notifier seam +
       an AST check that it never imports the customer WhatsApp channel),
       `test_handoff_routing.py` (routing, suppression, escalation → handoff,
