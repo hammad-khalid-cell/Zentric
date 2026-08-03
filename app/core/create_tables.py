@@ -9,6 +9,7 @@ from app.models.intervention import Intervention
 from app.models.delivery_attempt import DeliveryAttempt
 from app.models.intervention_outcome import InterventionOutcome
 from app.models.interaction import Interaction
+from app.models.handoff import Handoff
 
 
 def create_tables():

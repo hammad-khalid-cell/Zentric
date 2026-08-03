@@ -50,3 +50,16 @@ class AgentState(TypedDict):
         "reschedule", "update_address", "available_window", "cancel", "unclear"
     ]]
     corrective_payload: Optional[dict]      # extracted slots: {"address": ..., "window": ...}
+
+    # NEW — human handoff (Phase 5). Conversation-scoped, NOT parcel-scoped: once a
+    # human owns a customer's thread the bot must go quiet for that customer across
+    # every parcel and intent, so this is keyed by phone number like the session, not
+    # by tracking number like `pending_action`.
+    #
+    # Loaded by memory_load_node from the handoffs store. When it holds a CLAIMED
+    # handoff, route_after_memory_load short-circuits the whole graph into
+    # handoff_hold — before intent classification, so no LLM call is made and no
+    # auto-reply is generated. `handoff_suppressed` records that that happened, which
+    # is what distinguishes "the bot chose to say nothing" from "the bot failed".
+    human_handoff: Optional[dict]           # open/claimed handoff row for this customer
+    handoff_suppressed: Optional[bool]      # True when a human owned the thread and the bot stayed silent

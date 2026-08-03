@@ -12,10 +12,14 @@ from tests.conftest import base_state, make_parcel
 
 
 @pytest.fixture(autouse=True)
-def stub_llm(monkeypatch):
+def stub_boundaries(monkeypatch):
     # decision_making_node calls the LLM only to write a human-readable sentence;
     # stub it so tests are offline and deterministic.
     monkeypatch.setattr(nodes, "safe_chat_completion", lambda **kw: "stubbed explanation")
+    # It also records the failed delivery attempt (Phase 3), which opens a real
+    # Postgres session. That write is asserted in tests/test_delivery_service.py;
+    # here it's an unrelated side effect, so stub it out rather than hit the DB.
+    monkeypatch.setattr(nodes, "record_attempt_outcome", lambda *a, **kw: {"recorded": False})
 
 
 def _delayed_state(delay_reason):

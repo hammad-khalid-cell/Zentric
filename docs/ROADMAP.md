@@ -6,7 +6,7 @@
 > progress · `[x]` done. Priorities: **P0** (blocks the value prop) · P1 (makes it
 > worth it / defensible) · P2 (robustness & polish).
 
-Last updated: 2026-07-29 (Phase 4 — ops dashboard UI, ROI model, ops API).
+Last updated: 2026-07-29 (Phase 5 — human handoff, bot suppression, ops write API).
 
 ---
 
@@ -20,7 +20,10 @@ Last updated: 2026-07-29 (Phase 4 — ops dashboard UI, ROI model, ops API).
 - [x] Refactor data retrieval into `app/agents/tracking_agent.py`
 - [x] Fix `memory_save_node` returning `None`; remove duplicate graph edge
 - [x] pytest suite (70 tests) + `docs`-style TEST_REPORT
-- [ ] Wire an autouse dummy-env fixture so tests run in CI without real secrets (P2)
+- [ ] Wire an autouse dummy-env fixture so tests run in CI without real secrets (P2).
+      *Narrowed:* the suite is now genuinely offline (see parking lot), but importing
+      `app.core.config` still **raises** without real credentials in `.env`, so CI needs
+      dummy values injected before collection. That's all that's left of this item.
 
 ---
 
@@ -152,10 +155,12 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
       `/roi/assumptions` reports the system's *measured* deflection/success rates
       **separately from** the model defaults and **with sample sizes** — right now that's
       100% off n=3 and n=1, which must look as weak as it is rather than authoritative.
-- [ ] `proactive_notifier` doesn't pass `tracking_number` to `send_whatsapp_message`
-      (`proactive_notifier.py:79`), so proactive outbound rows land in `messages` with a
-      null tracking number and the dashboard thread can't say which parcel they're about
-      — one-line fix, found while smoke-testing the ops API
+- [x] `proactive_notifier` didn't pass `tracking_number` to `send_whatsapp_message`
+      (`proactive_notifier.py:79`), so proactive outbound rows landed in `messages` with a
+      null tracking number and the dashboard thread couldn't say which parcel they were
+      about — found while smoke-testing the ops API. Fixed, and pinned by the first
+      tests this module has had (`tests/test_proactive_notifier.py`, 5 new): tracking-number
+      propagation, pending action opened for `notify` reasons only, already-notified skip
 
 ### Frontend — `app/static/`, served at `/dashboard`
 
@@ -170,13 +175,35 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
 - [x] Browser customer simulator page at `/simulator` — posts to the existing
       `/webhook/whatsapp` (customer surface, no new backend, `send_whatsapp_message()`
       seam untouched) so the "live" demo has a traffic source on the same screen
-- [ ] **Spread the demo dataset over several days** — every `Interaction` /
-      `InterventionOutcome` currently lands on the day it was generated, so the trend
-      chart is one bar beside flat zeros. `simulate_outcomes` relies on the `created_at`
-      server default; backdating needs explicit timestamps. **Do this before the defense
-      or the trend panel has nothing to show.**
-- [ ] Eyeball the rendered dashboard in a browser (no browser tooling was available in
-      the build session — field contracts and JS syntax were verified headlessly)
+- [x] **Spread the demo dataset over several days** — `python -m app.tools.seed_demo_history`
+      writes backdated `Interaction` / `Message` / `Intervention` / `DeliveryAttempt` /
+      `InterventionOutcome` chains with explicit `created_at` (the server default was why
+      everything piled onto one day). Generation is split into a pure, seeded
+      `plan_history()` and a `write_plan()` that only inserts, so the shape is testable
+      without a DB (`tests/test_seed_demo_history.py`, 11 new). Weekday/weekend volume
+      shape and a real after-hours tail; **no artificial growth ramp** — a fabricated
+      adoption curve would claim something the system hasn't earned. Defaults to **18**
+      days because history ends *yesterday*, so a 14-day generation is already missing
+      its oldest bucket and sheds one more per day; the extra days are slack.
+      All 14 chart buckets now populated (deflection 33–100%/day, RTO 76.5% off n=34).
+      ⚠️ **This is MODELLED history, not observed** — rows are marked (`DEMO`-prefixed
+      tracking numbers, reserved `92300900xxxx` phones), removable with `--wipe`, and must
+      be presented as modelled, exactly like `RTO_COST_PKR` (`PROJECT_PLAN.md` §3).
+- [~] Eyeball the rendered dashboard in a browser — **still open**, no browser tooling
+      available in either session. A code-read pass (the half that doesn't need eyes)
+      found and fixed three things screenshots wouldn't have shown anyway:
+      the conversation list is a 420px scroll box that the 4s poll tore down and rebuilt
+      unconditionally, resetting scroll position and dropping keyboard focus every tick
+      (now change-detected by signature + scroll preserved) — much more visible since the
+      demo history added ~40 threads; and `selectConversation` (click) and `runRoi`
+      (debounce timer) were unguarded async, so a DNS blip left an unhandled rejection
+      with the status pill still reading "Live" (both wrapped in `guarded` now).
+      **Still needs a human to look at it**: layout, dark mode, long Roman-Urdu strings
+      in bubbles, and the charts at real widths. Attempted again 2026-07-31 with browser
+      tooling available, but the Chrome extension wasn't connected — deferred by
+      decision, not blocked on code. Everything *checkable* without eyes now is: all
+      pages and assets serve 200, every ops endpoint returns data, and an
+      unauthenticated `/ops/*` read is refused with 401.
 
 **Charts** follow the dataviz method: two categorical slots (blue = support lever,
 orange = RTO lever, validated in both light and dark — worst adjacent CVD ΔE 24.7/26.8),
@@ -193,12 +220,78 @@ in `.env` — without it the ops API and `/metrics/report` return 503 by design.
 
 ---
 
-## Phase 5 — Human handoff — P1
+## Phase 5 — Human handoff — P1 — ✅ done
 
-- [ ] On escalation, notify staff (channel/queue) — not just a flag/ticket
-- [ ] A place a human can view the thread and mark it handled (dashboard tie-in)
-- [ ] Suppress bot auto-replies once a human has taken over
-- [ ] Tests: handoff routing + bot suppression
+**Decisions taken** (so a later session doesn't relitigate them):
+- **Two tokens, not one.** Phase 4's argument for a single shared `DASHBOARD_TOKEN` was
+  that the ops surface *could not write*. "Mark handled" is the first real write, so
+  rather than quietly widening the read token, writes need a separate
+  `DASHBOARD_WRITE_TOKEN`. The defensible claim changes shape but survives: it is no
+  longer "the dashboard is read-only" but **"a holder of the read token alone still
+  cannot write"** — and with the write token unset, the API *is* exactly Phase 4's.
+- **Writes live in their own router** (`app/routes/ops_write_routes.py`), not bolted
+  onto `ops_routes.py`, so that file's "every endpoint here is a GET behind the read
+  token" invariant stays true and checkable by reading one file. A test asserts it
+  structurally.
+- **A separate notification port**, not the WhatsApp seam. `send_whatsapp_message()` is
+  the *customer* channel — its mock persists to `messages` keyed by `customer_phone`,
+  so staff alerts through it would inject internal notices into customer threads and
+  would spend real Meta quota in Phase 7. Same shape, same one-env swap, different
+  destination.
+- **Conversation-scoped, in its own table.** Not a `Ticket` column (parcel-scoped,
+  `tracking_number NOT NULL`, wrong grain — the most common trigger has no parcel at
+  all) and not Redis (ephemeral; this is an auditable business-affecting state change
+  per §5.2 that the dashboard reads from Postgres).
+- **Only `claimed` suppresses the bot**, not `open`. An open handoff means staff were
+  alerted but nobody has picked it up — silence then leaves the customer with nothing.
+
+- [x] On escalation, notify staff (channel/queue) — not just a flag/ticket.
+      **The gap was worse than the roadmap said:** `escalation_check_node` set
+      `needs_human_handoff`, produced a soothing reply, and created *nothing* durable —
+      no ticket (those need a parcel), no queue entry. Now `raise_handoff()` opens a
+      `Handoff` row and alerts staff via the new `app/core/staff_notifier.py` seam
+      (`STAFF_NOTIFY_PROVIDER=log|slack|email`, default `log`, no network/quota). The
+      delay path's `decision == "escalate"` links its handoff to the `Ticket` it creates.
+      Alerts follow the *row*, not the message, so three angry messages raise one alert.
+      Notification delivery is itself audited (`notified_at` / `notify_failed`).
+- [x] A place a human can view the thread and mark it handled — Handoffs pane on
+      `/dashboard`, with **two** transitions rather than one: *Take* (`open → claimed`)
+      is what silences the bot, *Resolve* (`claimed → resolved`) restores it. Collapsing
+      them would conflate "I'm on it" with "it's done" and make the suppression window
+      invisible. `actor` is required and never defaulted — there are no staff accounts
+      yet (Phase 6), so an explicit name is the honest audit record. Repeat clicks get a
+      409 rather than silently rewriting `claimed_at`/`resolved_at`.
+- [x] Suppress bot auto-replies once a human has taken over — `human_handoff` /
+      `handoff_suppressed` added to `state.py` (contract first), loaded in
+      `memory_load_node`, and short-circuited by `route_after_memory_load` into a
+      terminal `handoff_hold` node **before** intent classification, so a human-owned
+      turn costs no LLM call. The customer's message is still logged inbound (that
+      happens before the graph), so the human sees it; the bot simply sends nothing —
+      a "someone will be with you shortly" on every message would interleave bot text
+      into a conversation a person is handling. `needs_human_handoff` is set, so the
+      existing `record_interaction` books the turn as `resolved_by='human'` and it
+      never inflates the deflection rate. `HANDOFF_TTL_HOURS` (default 8, one shift)
+      lazily expires an abandoned claim so a human who walks away can't silence the bot
+      for that customer forever.
+- [x] Tests: handoff routing + bot suppression — 62 new (287 total).
+      `test_handoff.py` (store lifecycle, idempotency, expiry sweep, notifier seam +
+      an AST check that it never imports the customer WhatsApp channel),
+      `test_handoff_routing.py` (routing, suppression, escalation → handoff,
+      end-to-end through `process_inbound_message`), `test_ops_write_routes.py`
+      (**the read token cannot write** — the load-bearing auth test — plus attribution,
+      409s, and a structural guard that no mutating route lands in the read router).
+
+**Acceptance:** ✅ **verified end-to-end against the live stack** (2026-07-31), not just
+in unit tests. Escalation raises a handoff and notifies staff → an *open* handoff does
+**not** suppress the bot → the read token is refused on claim (401) → claiming with the
+write token suppresses → a second claim is a 409, not a silent rewrite → an inbound
+message during suppression is **logged but not answered** → a blank actor is a 422 →
+resolving hands the thread back and the bot replies again. All 19 checks passed.
+
+**One-time setup after pulling:** `python -m app.core.create_tables` for the new
+`handoffs` table, then set `DASHBOARD_WRITE_TOKEN` (a *different* value from
+`DASHBOARD_TOKEN`) — without it the handoff buttons return 503 by design. See
+**`docs/MIGRATIONS.md`**. *(Both already done on the dev machine.)*
 
 ---
 
@@ -240,12 +333,14 @@ Backs the safety/quality claims with evidence.
 
 - [ ] Link `messages` to `interactions` (shared id) so the dashboard can show latency
       per reply instead of correlating by phone + timestamp — noted while building Phase 4
-- [ ] **The test suite depends on live network** despite `tests/conftest.py` claiming
-      otherwise: `vector_store` builds a real Chroma Cloud client at import time, and
-      `decision_making_node` opens a real Supabase Postgres connection. Intermittent DNS
-      failures (`Temporary failure in name resolution`) make full runs fail and pass at
-      random while individual files are fine. Same root cause as the Phase 0 dummy-env
-      fixture item — worth doing together, and it's a hard CI blocker.
+- [x] **The test suite depended on live network** despite `tests/conftest.py` claiming
+      otherwise. Three causes, all fixed: `vector_store` built its Chroma Cloud client at
+      *import* time (so a DNS blip failed collection of modules that never touch RAG — it's
+      lazy now), `decision_making_node`'s `record_attempt_outcome` opened a real Postgres
+      connection in `test_decision.py`, and LangSmith tracing phoned home on every graph
+      invoke. `conftest.py` now **enforces** offline with an autouse socket block, so this
+      class of regression fails loudly at the call site instead of intermittently. 209
+      passed in 5.6s with no network. Opt out per-test with `@pytest.mark.allow_network`.
 - [ ] Roman-Urdu code-switched labeled dataset + classification accuracy report (optional novelty artifact)
 - [ ] Merchant-facing notifications (COD sale protected)
 - [ ] Address geocoding/validation

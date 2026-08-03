@@ -4,7 +4,9 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.routes import test_routes, whatsapp_routes, metrics_routes, ops_routes
+from app.routes import (
+    test_routes, whatsapp_routes, metrics_routes, ops_routes, ops_write_routes,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -14,6 +16,9 @@ app.include_router(test_routes.router)
 app.include_router(whatsapp_routes.router)
 app.include_router(metrics_routes.router)
 app.include_router(ops_routes.router)
+# Writes live in their own router behind their own token (Phase 5) so ops_routes stays
+# verifiably read-only — see app/routes/ops_write_routes.py.
+app.include_router(ops_write_routes.router)
 
 # The ops dashboard is a no-build static app served by this same process — one
 # command and one URL at demo time, and no CDN to fail on an offline machine. The

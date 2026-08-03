@@ -482,6 +482,64 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .gate .btn { width: 100%; }
 .error { color: var(--critical); font-size: 12px; min-height: 18px; margin-top: 8px; }
 .empty { color: var(--muted); font-size: 12px; padding: 16px 0; text-align: center; }
+.muted { color: var(--muted); }
+
+/* --- handoff queue (Phase 5) ------------------------------------------- */
+
+.btn.small {
+  padding: 5px 11px;
+  font-size: 12px;
+  margin-right: 6px;
+}
+
+.btn.small:last-of-type { margin-right: 0; }
+.btn.small:disabled { opacity: 0.5; cursor: default; }
+
+/* Who is acting. There are no staff accounts yet (Phase 6), so this is typed once
+   per session and recorded on every claim/resolve — an unattributed audit row would
+   be worse than requiring the field. */
+.handoff-actor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.handoff-actor label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.handoff-actor input {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  min-width: 160px;
+}
+
+.handoff-actor .note {
+  margin-top: 0;
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* A staff alert that never went out is a queue entry nobody knows about — it has to
+   be visible, not swallowed. */
+.warn-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--critical);
+}
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
