@@ -122,7 +122,7 @@ def test_parcel_not_found_records_nothing(monkeypatch):
     fake = FakeDB(parcel=None)
     monkeypatch.setattr(delivery_service, "SessionLocal", lambda: fake)
 
-    result = delivery_service.record_attempt_outcome("TRK00000", "failed", "incorrect_address")
+    result = delivery_service.record_attempt_outcome("TRK00000", "failed", "incorrect_address", source=delivery_service.SOURCE_SIMULATOR)
 
     assert result == {"recorded": False, "reason": "parcel_not_found"}
     assert fake.added == []
@@ -134,7 +134,7 @@ def test_records_failed_attempt_with_no_open_intervention(monkeypatch):
     fake = FakeDB(parcel=parcel, interventions=[])
     monkeypatch.setattr(delivery_service, "SessionLocal", lambda: fake)
 
-    result = delivery_service.record_attempt_outcome("TRK20250", "failed", "incorrect_address")
+    result = delivery_service.record_attempt_outcome("TRK20250", "failed", "incorrect_address", source=delivery_service.SOURCE_SIMULATOR)
 
     assert result["recorded"] is True
     assert result["attempt_no"] == 1
@@ -153,7 +153,7 @@ def test_success_links_unresolved_intervention_as_delivered(monkeypatch):
     fake = FakeDB(parcel=parcel, interventions=[intervention], resolved_intervention_ids=[])
     monkeypatch.setattr(delivery_service, "SessionLocal", lambda: fake)
 
-    result = delivery_service.record_attempt_outcome("TRK20250", "success")
+    result = delivery_service.record_attempt_outcome("TRK20250", "success", source=delivery_service.SOURCE_SIMULATOR)
 
     assert result["recorded"] is True
     outcomes = [o for o in fake.added if isinstance(o, InterventionOutcome)]
@@ -169,7 +169,7 @@ def test_failed_resolution_marks_still_failed(monkeypatch):
     fake = FakeDB(parcel=parcel, interventions=[intervention], resolved_intervention_ids=[])
     monkeypatch.setattr(delivery_service, "SessionLocal", lambda: fake)
 
-    delivery_service.record_attempt_outcome("TRK20250", "failed", "customer_unavailable")
+    delivery_service.record_attempt_outcome("TRK20250", "failed", "customer_unavailable", source=delivery_service.SOURCE_SIMULATOR)
 
     outcomes = [o for o in fake.added if isinstance(o, InterventionOutcome)]
     assert outcomes[0].outcome == "still_failed"
@@ -181,7 +181,7 @@ def test_already_resolved_intervention_is_not_linked_again(monkeypatch):
     fake = FakeDB(parcel=parcel, interventions=[intervention], resolved_intervention_ids=["INT-0001"])
     monkeypatch.setattr(delivery_service, "SessionLocal", lambda: fake)
 
-    result = delivery_service.record_attempt_outcome("TRK20250", "success")
+    result = delivery_service.record_attempt_outcome("TRK20250", "success", source=delivery_service.SOURCE_SIMULATOR)
 
     assert not any(isinstance(o, InterventionOutcome) for o in fake.added)
     assert result["intervention_outcome_id"] is None
@@ -192,7 +192,7 @@ def test_duplicate_attempt_is_rejected_and_rolled_back(monkeypatch):
     fake = FakeDB(parcel=parcel, flush_raises=IntegrityError("dup", None, None))
     monkeypatch.setattr(delivery_service, "SessionLocal", lambda: fake)
 
-    result = delivery_service.record_attempt_outcome("TRK20250", "failed", "incorrect_address")
+    result = delivery_service.record_attempt_outcome("TRK20250", "failed", "incorrect_address", source=delivery_service.SOURCE_SIMULATOR)
 
     assert result == {"recorded": False, "reason": "duplicate_attempt"}
     assert fake.rolled_back is True

@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.core import auth, config, handoffs
+from app.services import delivery_service
 from app.core.handoffs import STATUS_CLAIMED, STATUS_OPEN, STATUS_RESOLVED
 from app.main import app
 
@@ -219,3 +220,118 @@ def test_ops_read_router_declares_no_write_methods():
         if route.methods - {"GET", "HEAD", "OPTIONS"} and route.path != "/ops/roi/simulate"
     ]
     assert mutating == []
+
+
+# --- the mock delivery system (Phase 6) ----------------------------------
+#
+# This endpoint stands in for the courier's own system reporting an attempt back. It
+# writes a row that feeds "RTO prevented", so on top of the auth and attribution rules
+# above it has to record *where the outcome came from* — a headline number a human can
+# move by clicking has to be able to say which of its inputs were clicked.
+
+ATTEMPT_URL = "/ops/parcels/TRK20250/attempt"
+
+
+@pytest.fixture
+def attempts(monkeypatch):
+    """Replace the delivery service so the route is tested without a database."""
+    calls = []
+
+    def fake_record(tracking_number, outcome, failure_reason=None, *, source,
+                    recorded_by=None, require_dispatched=False):
+        assert require_dispatched is True, (
+            "the ops console reports a rider attempt, so it must not be able to mark a "
+            "parcel that never left the origin as delivered")
+        calls.append({"tracking_number": tracking_number, "outcome": outcome,
+                      "failure_reason": failure_reason, "source": source,
+                      "recorded_by": recorded_by})
+        return {"recorded": True, "delivery_attempt_id": 7, "attempt_no": 1,
+                "status": "delivered", "previous_status": "out_for_delivery",
+                "status_changed": True, "attempts_remaining": 2,
+                "intervention_outcome_id": None}
+
+    monkeypatch.setattr(delivery_service, "record_attempt_outcome", fake_record)
+    return calls
+
+
+def test_read_token_cannot_record_a_delivery_attempt(client, attempts):
+    """The load-bearing auth test, extended to the endpoint that moves the RTO number.
+    A holder of the read token alone must not be able to manufacture a delivery."""
+    response = client.post(ATTEMPT_URL, json={"actor": "hammad", "outcome": "success"},
+                           headers=auth_header(READ_TOKEN))
+    assert response.status_code == 401
+    assert attempts == []
+
+
+def test_write_token_records_the_attempt(client, attempts):
+    response = client.post(ATTEMPT_URL, json={"actor": "hammad", "outcome": "success"},
+                           headers=auth_header(WRITE_TOKEN))
+    assert response.status_code == 200
+    assert response.json()["attempt"]["status"] == "delivered"
+
+
+def test_the_outcome_is_tagged_as_console_triggered(client, attempts):
+    """Provenance is the whole point: this row must never be mistakable for an outcome
+    the system observed, and `ops_console` is in delivery_service.MODELLED_SOURCES."""
+    client.post(ATTEMPT_URL, json={"actor": "hammad", "outcome": "success"},
+                headers=auth_header(WRITE_TOKEN))
+
+    assert attempts[0]["source"] == delivery_service.SOURCE_OPS_CONSOLE
+    assert attempts[0]["source"] in delivery_service.MODELLED_SOURCES
+    assert attempts[0]["recorded_by"] == "hammad"
+
+
+def test_attempt_actor_is_required_and_trimmed(client, attempts):
+    assert client.post(ATTEMPT_URL, json={"outcome": "success"},
+                       headers=auth_header(WRITE_TOKEN)).status_code == 422
+    assert client.post(ATTEMPT_URL, json={"actor": "   ", "outcome": "success"},
+                       headers=auth_header(WRITE_TOKEN)).status_code == 422
+
+    client.post(ATTEMPT_URL, json={"actor": "  hammad  ", "outcome": "success"},
+                headers=auth_header(WRITE_TOKEN))
+    assert attempts[-1]["recorded_by"] == "hammad"
+
+
+@pytest.mark.parametrize("outcome", ["delivered", "maybe", "", "SUCCESS"])
+def test_only_the_two_modelled_outcomes_are_accepted(client, attempts, outcome):
+    """The caller reports an attempt; it does not get to invent a parcel state. Anything
+    outside success/failed is refused at the edge rather than reaching the state machine."""
+    response = client.post(ATTEMPT_URL, json={"actor": "hammad", "outcome": outcome},
+                           headers=auth_header(WRITE_TOKEN))
+    assert response.status_code == 422
+    assert attempts == []
+
+
+def test_failure_reason_is_dropped_on_a_success(client, attempts):
+    """A success carrying a failure reason would be self-contradictory in the history."""
+    client.post(ATTEMPT_URL,
+                json={"actor": "hammad", "outcome": "success",
+                      "failure_reason": "customer_unavailable"},
+                headers=auth_header(WRITE_TOKEN))
+    assert attempts[0]["failure_reason"] is None
+
+
+def test_failure_reason_is_kept_on_a_failure(client, attempts):
+    client.post(ATTEMPT_URL,
+                json={"actor": "hammad", "outcome": "failed",
+                      "failure_reason": "customer_unavailable"},
+                headers=auth_header(WRITE_TOKEN))
+    assert attempts[0]["failure_reason"] == "customer_unavailable"
+
+
+@pytest.mark.parametrize("reason,expected_status", [
+    ("parcel_not_found", 404),
+    ("parcel_journey_complete", 409),
+    ("duplicate_attempt", 409),
+])
+def test_refusals_map_to_the_right_status(client, monkeypatch, reason, expected_status):
+    """Each refusal is a state conflict, not a malformed request — and a finished parcel
+    must not quietly accept another attempt."""
+    monkeypatch.setattr(
+        delivery_service, "record_attempt_outcome",
+        lambda *a, **k: {"recorded": False, "reason": reason, "status": "delivered"},
+    )
+    response = client.post(ATTEMPT_URL, json={"actor": "hammad", "outcome": "failed"},
+                           headers=auth_header(WRITE_TOKEN))
+    assert response.status_code == expected_status
+    assert response.json()["detail"]

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.core import handoffs
 from app.core.auth import require_dashboard_token
-from app.services import ops_read, roi_service
+from app.services import delivery_state, ops_read, roi_service
 from app.services.metrics_service import get_metrics_report
 
 # Same shape the customer-facing routes validate against (app/routes/test_routes.py) —
@@ -82,6 +82,14 @@ HANDOFF_STATUSES = (
     handoffs.STATUS_RESOLVED, handoffs.STATUS_EXPIRED,
 )
 
+# Derived from the state machine rather than restated, so a status added there can't be
+# silently unfilterable here.
+DELIVERY_STATUSES = frozenset({
+    delivery_state.STATUS_BOOKED, delivery_state.STATUS_PICKED_UP,
+    delivery_state.STATUS_IN_TRANSIT, delivery_state.STATUS_ARRIVED_AT_FACILITY,
+    delivery_state.STATUS_OUT_FOR_DELIVERY, delivery_state.STATUS_ATTEMPT_FAILED,
+}) | delivery_state.TERMINAL_STATUSES
+
 
 @router.get("/handoffs")
 def list_handoffs(
@@ -96,6 +104,26 @@ def list_handoffs(
             detail=f"status must be one of: {', '.join(HANDOFF_STATUSES)}",
         )
     return {"handoffs": handoffs.list_handoffs(status=status, limit=limit)}
+
+
+@router.get("/deliveries")
+def list_deliveries(
+    status: str | None = Query(None, description=f"One of {', '.join(sorted(DELIVERY_STATUSES))}"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Parcels and their delivery-attempt history (Phase 6), actionable ones first.
+
+    Read-only. *Running* an attempt is a write and lives in `ops_write_routes.py` behind
+    the write token — this endpoint only reports where each parcel got to, including
+    whether the next attempt would currently be accepted, so the pane can explain a
+    refusal instead of surfacing a bare 409.
+    """
+    if status is not None and status not in DELIVERY_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of: {', '.join(sorted(DELIVERY_STATUSES))}",
+        )
+    return {"deliveries": ops_read.list_deliveries(status=status, limit=limit)}
 
 
 class RoiRequest(BaseModel):

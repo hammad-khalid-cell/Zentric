@@ -297,6 +297,44 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .mono { font-variant-numeric: tabular-nums; }
 .table-scroll { overflow-x: auto; }
 
+/* --- delivery attempt history (Phase 6) -------------------------------- */
+
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* One chip per attempt, in order — a parcel's journey read left to right. Outcome is
+   carried by the ✓/✗ glyph in the label, never by the colour alone. */
+.attempt-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.attempt-chip[data-outcome="success"] { color: var(--success-text); }
+.attempt-chip[data-outcome="failed"] { color: var(--text-secondary); }
+
+/* Provenance mark. `M` = a human triggered this outcome from the console, so it is
+   modelled rather than observed and must never be presented as the latter
+   (docs/PROJECT_PLAN.md §3). `?` = written before provenance was recorded at all. */
+.chip-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.sub { color: var(--muted); font-size: 11px; margin-top: 2px; max-width: 30ch; }
+
 /* Status never rides on colour alone — icon + label, always. */
 .status {
   display: inline-flex;
@@ -318,6 +356,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   flex: none;
 }
 
+/* In-flight and uneventful. Distinct from `serious` on purpose: a parcel that is simply
+   out for delivery is not a warning, and painting every non-final state amber trains an
+   operator to ignore the colours that do mean something. */
+.status[data-tone="neutral"] .status-icon { background: var(--axis); color: var(--text-primary); }
 .status[data-tone="good"] .status-icon { background: var(--good); }
 .status[data-tone="warning"] .status-icon { background: var(--warning); color: #0b0b0b; }
 .status[data-tone="serious"] .status-icon { background: var(--serious); color: #0b0b0b; }
@@ -348,8 +390,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* Cases was the only unbounded pane in this grid: at 40+ rows it ran roughly 3x the
    height of the Conversations card beside it, leaving a large dead gap under the left
    column. Cap it to the same height the conversation list and thread already use so
-   both columns end together, and scroll it in place like they do. */
-#cases {
+   both columns end together, and scroll it in place like they do. Deliveries is capped
+   for the same reason — it lists every parcel, so it grows without limit too. */
+#cases,
+#deliveries {
   max-height: var(--pane-h);
   overflow-y: auto;
 }
@@ -357,7 +401,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* The column labels have to survive that scroll. `border-collapse: collapse` drops a
    sticky cell's own border, so the rule under the header is painted as an inset
    shadow instead — otherwise rows slide up under a header with no separator. */
-#cases thead th {
+#cases thead th,
+#deliveries thead th {
   position: sticky;
   top: 0;
   z-index: 1;

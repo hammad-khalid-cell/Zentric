@@ -326,17 +326,115 @@ resolving hands the thread back and the bot replies again. All 19 checks passed.
 
 ## Phase 6 — Robustness & polish — P2
 
-- [ ] Scheduler/worker for `scan_and_notify` (cron/queue) + retries + dead-letter
-- [ ] Conversation history / richer memory beyond flat 30-min blob
-- [ ] Auth on inbound webhook + admin endpoints
-- [ ] Mock "delivery management system" so reroute/reschedule visibly changes state
+**Triaged 2026-08-06** — seven items ranked by what a panel actually sees, because
+shipping three that change the demo beats seven that don't. **Build:** the mock delivery
+system, the scheduler, and the cheap half of webhook auth. **Cut:** conversation history,
+observability, a larger seed dataset. **Moved to Phase 7:** delivery receipts and the
+webhook signature check. Reasons recorded on each item.
+
+- [~] **Mock "delivery management system" so reroute/reschedule visibly changes state.**
+      Ranked first: it closes the last ⛔ on `PROJECT_PLAN.md` §4.2. A corrective action
+      already moved the parcel (`apply_reschedule` sets `out_for_delivery` and bumps
+      `attempt_count`) but nothing ever *ended* the journey, so every parcel sat at
+      `out_for_delivery` forever and "did it actually get delivered?" had only an audit
+      row for an answer.
+      - [x] `app/services/delivery_state.py` — the deterministic rule table.
+            `next_status(status, outcome, attempts_made)` is a pure lookup: no model, no
+            probability, one answer (§5.1). Adds `attempt_failed` (the window the
+            proactive loop exists to act in, previously unrepresentable) and
+            `returned_to_origin` (the cost centre). **`MAX_DELIVERY_ATTEMPTS = 3` is an
+            assumption, not sourced courier data** — hold it to the `RTO_COST_PKR`
+            standard. No migration: two new *values* in the existing free-text
+            `parcels.status`.
+      - [x] `record_attempt_outcome` advances the parcel, clears `delay_reason` on
+            delivery, and **refuses an attempt on a terminal parcel outright** rather
+            than recording one it then declines to act on.
+      - [x] **Provenance, because this moves the headline number.** The ops button
+            creates a delivery outcome, and "RTO prevented" is computed from those — so
+            `delivery_attempts` gains `source` + `recorded_by`, and `source` is a
+            **required keyword-only** argument: an untagged write is impossible, not
+            merely discouraged. `MODELLED_SOURCES` (`ops_console`, `simulator`) is the
+            set that must never be presented as observed, exactly as §3 demands of
+            `RTO_COST_PKR`. Pre-existing rows stay NULL — back-filling a source would be
+            claiming something about data nobody tagged at the time.
+      - [x] `POST /ops/parcels/{tracking_number}/attempt` in the **write** router behind
+            `DASHBOARD_WRITE_TOKEN` — the same seam a real courier webhook calls in
+            Phase 7, differing only in who pulls the trigger. `actor` moved to a shared
+            `ActorRequest` base so the attribution rule holds for *future* write
+            endpoints, not just the ones that remembered.
+      - [x] ⚠️ `find_delayed_parcels` now excludes **every** terminal status, not just
+            `delivered`. A returned parcel is overdue forever, so the old filter would
+            have had the scanner messaging customers about a delivery never coming.
+      - [x] Tests: 28 new (340 total) — the rule table, the wiring, terminal refusal,
+            rollback leaving the parcel untouched, provenance, and **the read token
+            still cannot record a delivery**.
+      - [x] Verified end-to-end against live Postgres: reschedule → `out_for_delivery`,
+            success → `delivered`, finished parcel → 409, provenance written.
+      - [x] `GET /ops/deliveries` (read router, still GET-only) + Deliveries pane:
+            parcel, state, `n of 3` attempts with a **"last attempt"** warning, the
+            attempt history as chips, and the Delivered/Failed buttons. Each chip carries
+            its provenance — `M` for manually triggered (with who, on hover), `?` for
+            rows written before provenance existed. A refusal is **explained in the row**
+            rather than surfacing a bare 409, because "an attempt needs a corrective
+            action to schedule it" is the non-obvious rule an operator hits first.
+            `next_attempt` is advisory; the write endpoint re-checks and stays the
+            authority.
+      - [x] **The ops console cannot mark a parcel that never left the origin
+            "delivered."** `can_attempt_delivery` excludes `booked`/`picked_up`, and it
+            is **opt-in** (`require_dispatched=True`) rather than global: the scanner
+            legitimately records failures on parcels still `in_transit`, and applying
+            this everywhere would starve the RTO metric of its organic first failures.
+            Two different real events, two different rules.
+      - [x] Three UI defects found by using it, all introduced by this phase's scroll
+            boxes and writes: the 10s poll **reset the pane's scroll mid-read** (now
+            signature-change-detected and scroll-preserving, same as the conversation
+            list — and `#cases` needed it too once it gained a scroll box); a **write's
+            refresh raced the in-flight poll**, so a slow response could repaint the
+            pre-write state (now generation-stamped, newest render wins); and a ~2s
+            round trip left the row looking dead after a click (now shows *Recording…*
+            — deliberately not an optimistic paint of an outcome that hasn't been
+            recorded, since this pane's whole claim is that it reflects real state).
+      - [x] Verified in-browser end to end, both themes: **Failed → bot reschedules →
+            Delivered**, with the parcel reaching `delivered` and both attempts tagged
+            `ops_console`.
+- [ ] Scheduler/worker for `scan_and_notify` (cron/queue) + retries + dead-letter.
+      *Decided:* a **standalone worker process** with APScheduler inside it, not
+      in-process in uvicorn (`--reload` and multiple workers each mean duplicate
+      schedulers) and not an Upstash queue (no blocking pop over REST, and the DNS
+      flakiness on this machine would take the schedule down with it). Retries and the
+      dead-letter live in Postgres, which makes a dead-lettered notification **visible
+      in the Cases feed** — today `proactive_notifier.py`'s `except Exception: log;
+      continue` loses failures silently. ⚠️ Only Phase-6 item with a Phase 7 risk, and
+      it is quota not architecture: a timer that sends is free on `mock` and expensive
+      on `cloud`. Needs a kill-switch defaulting off and a per-run send cap.
+- [ ] ~~Conversation history / richer memory beyond flat 30-min blob~~ — **cut.** Not a
+      storage problem (`messages` already has full history), so it is only "feed the
+      last N turns into the prompt". Costs ~400–600 tokens on the latency path, and the
+      real objection is §5.1: more conversational context gives the model material to
+      reason about what *should* happen and phrase something inconsistent with
+      `REASON_TO_DECISION`. The multi-turn cases that matter are already carried
+      deterministically by `pending_clarification` and `pending_actions`. Cutting it is
+      the stronger defense answer, not the weaker one.
+- [ ] Auth on inbound webhook. **Split:** the `hub.verify_token` check on the GET
+      handshake is buildable now behind an optional `WHATSAPP_VERIFY_TOKEN` (today
+      `whatsapp_routes.py:58` echoes `hub.challenge` unconditionally). The
+      `X-Hub-Signature-256` check **moves to Phase 7** — building HMAC with no real
+      signature to test against only tests the implementation against itself. The
+      "admin endpoints" half of this line is already done by Phases 4/5.
 - [ ] Realistic, larger seed dataset. *Partly answered already:* `seed_demo_history.py`
       is now idempotent and tops up, so it is the single owner of the demo window and a
       third generator would be the "two tools fighting over the same tables" risk rather
       than a fix. Volume comes from `--days` / `--max-per-day` on that tool. What is
       genuinely still open is honesty about sample size, not size itself.
-- [ ] Observability: structured logging, basic metrics/tracing
-- [ ] Delivery-receipt handling (once real API exists)
+- [ ] ~~Observability: structured logging, basic metrics/tracing~~ — **cut.** LangSmith
+      is already wired. Structured logging and tracing are hygiene no panelist sees, and
+      the one observability gap that *does* matter — a silently lost proactive
+      notification — is fixed by the scheduler item surfacing it as **dashboard rows**,
+      which is better evidence than a trace.
+- [ ] ~~Delivery-receipt handling~~ — **moved to Phase 7**, confirmed. It is the
+      `statuses` array (sent/delivered/read) in Meta's webhook; the mock channel's
+      "delivery" is a DB insert that always succeeds, so there is nothing meaningful to
+      mock and nothing to learn from mocking it.
 
 ---
 

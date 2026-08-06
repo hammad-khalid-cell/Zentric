@@ -2,14 +2,22 @@ from datetime import date
 
 from app.core.database import SessionLocal
 from app.models.parcel import Parcel
+from app.services import delivery_state
 
 
 def find_delayed_parcels() -> list[dict]:
+    """Overdue parcels whose journey hasn't ended. Excluding *every* terminal status,
+    not just `delivered`: a parcel returned to origin is overdue forever, so filtering
+    on `!= "delivered"` alone would have the proactive scanner chasing dead parcels and
+    messaging customers about a delivery that is never coming."""
     db = SessionLocal()
     try:
         parcels = (
             db.query(Parcel)
-            .filter(Parcel.status != "delivered", Parcel.expected_delivery_date < date.today())
+            .filter(
+                Parcel.status.notin_(tuple(delivery_state.TERMINAL_STATUSES)),
+                Parcel.expected_delivery_date < date.today(),
+            )
             .all()
         )
         return [_to_dict(p) for p in parcels]

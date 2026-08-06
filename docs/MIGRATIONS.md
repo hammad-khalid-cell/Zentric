@@ -18,6 +18,39 @@ Order of operations when pulling schema changes:
 
 ---
 
+## Phase 6 — delivery state machine + outcome provenance (2026-08-06)
+
+**No new tables.** Two nullable columns are added to an existing one, so this **does**
+need an `ALTER TABLE`:
+
+```sql
+ALTER TABLE delivery_attempts ADD COLUMN IF NOT EXISTS source      TEXT;
+ALTER TABLE delivery_attempts ADD COLUMN IF NOT EXISTS recorded_by TEXT;
+CREATE INDEX IF NOT EXISTS ix_delivery_attempts_source ON delivery_attempts (source);
+```
+
+Both are nullable on purpose: rows written before this change are genuinely of unknown
+provenance, and back-filling them with a source would be *claiming* something about data
+we didn't tag at the time. They read as untagged, which is the honest state.
+
+**Why provenance is now a column.** "RTO prevented" is computed from delivery outcomes,
+and Phase 6 adds an ops button that creates one. A headline number that a human can move
+by clicking has to be able to say which of its inputs were clicked —
+`delivery_service.MODELLED_SOURCES` is the set that must never be presented as observed
+courier data, exactly as `docs/PROJECT_PLAN.md` §3 requires of `RTO_COST_PKR` and the
+demo history.
+
+**No `parcels` change.** The delivery state machine adds two new *values* to the
+existing free-text `parcels.status` column — `attempt_failed` and `returned_to_origin`
+— joining the six `seed_data.STATUSES` already uses. Nothing to alter.
+
+⚠️ **`find_delayed_parcels` behaviour change.** It previously excluded only
+`delivered`; it now excludes every terminal status. Without that, a parcel returned to
+origin stays overdue forever and the proactive scanner would keep messaging the customer
+about a delivery that is never coming.
+
+---
+
 ## Phase 5 — human handoff (2026-07-29)
 
 **New table** (created automatically by `create_tables`, no `ALTER TABLE` needed — no

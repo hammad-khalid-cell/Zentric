@@ -136,6 +136,37 @@
     </div>
   </section>
 
+  <!-- Deliveries (Phase 6). The mock delivery management system: running an attempt
+       stands in for the courier's own system reporting an outcome back, which is the
+       same seam a real courier webhook calls in Phase 7. Every outcome recorded here is
+       tagged `ops_console` and shown as manually triggered, because these rows feed the
+       RTO figure and a number a human can move has to say so. -->
+  <section>
+    <div class="section-head">
+      <h2>Deliveries</h2>
+      <p>Each parcel's journey and the attempt that ends it. Running an attempt stands in for the courier reporting back — outcomes triggered here are marked as such.</p>
+      <div class="filter-row">
+        <div class="seg" id="delivery-seg" role="group" aria-label="Delivery status">
+          <button type="button" data-status="" aria-pressed="true">All</button>
+          <button type="button" data-status="attempt_failed" aria-pressed="false">Failed attempt</button>
+          <button type="button" data-status="out_for_delivery" aria-pressed="false">Out for delivery</button>
+          <button type="button" data-status="delivered" aria-pressed="false">Delivered</button>
+          <button type="button" data-status="returned_to_origin" aria-pressed="false">Returned</button>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="handoff-actor">
+        <label for="delivery-actor-input">Acting as</label>
+        <input id="delivery-actor-input" type="text" maxlength="80" placeholder="your name"
+               autocomplete="off">
+        <span class="note">Recorded on every attempt as who triggered it — same name as the handoff queue.</span>
+      </div>
+      <div class="table-scroll" id="deliveries"></div>
+      <div class="error" id="delivery-error"></div>
+    </div>
+  </section>
+
   <section>
     <div class="section-head">
       <h2>Operations</h2>
