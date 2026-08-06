@@ -6,7 +6,7 @@
 > progress · `[x]` done. Priorities: **P0** (blocks the value prop) · P1 (makes it
 > worth it / defensible) · P2 (robustness & polish).
 
-Last updated: 2026-08-06 (first rendered dashboard review; response-honesty fix).
+Last updated: 2026-08-06 (Phase 6 — delivery state machine, proactive worker, webhook handshake).
 
 ---
 
@@ -324,7 +324,7 @@ resolving hands the thread back and the bot replies again. All 19 checks passed.
 
 ---
 
-## Phase 6 — Robustness & polish — P2
+## Phase 6 — Robustness & polish — P2 — ✅ the three items worth building are done
 
 **Triaged 2026-08-06** — seven items ranked by what a panel actually sees, because
 shipping three that change the demo beats seven that don't. **Build:** the mock delivery

@@ -144,8 +144,11 @@ installed. `pip install -r requirements.txt` picks it up automatically.
 
 **Demo data:** after applying at least one corrective action (Phase 2's proactive
 loop), run `python -m app.tools.simulate_outcomes` once to resolve open interventions
-to a delivered/still-failed outcome (there's no real courier feedback signal yet —
-Phase 6) so `GET /metrics/report`'s RTO-reduction % is non-trivial for the demo.
+to a delivered/still-failed outcome so `GET /metrics/report`'s RTO-reduction % is
+non-trivial for the demo. *(Superseded by Phase 6: the Deliveries pane resolves an
+attempt through the same `record_attempt_outcome` seam, and tags it `ops_console`
+rather than `simulator`. Both are in `MODELLED_SOURCES` — neither is observed courier
+data.)*
 
 ---
 
