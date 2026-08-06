@@ -45,12 +45,19 @@ uvicorn app.main:app --reload
 python -m app.core.create_tables      # creates parcels/tickets/reroutes tables
 python -m app.core.seed_data          # seeds ~50 test parcels (idempotent, skips existing tracking numbers)
 python -m app.services.ingest_faqs    # embeds data/logistics_customer_support_faqs.json into Chroma
+
+# the proactive worker (Phase 6) — what makes the system autonomous rather than hand-run.
+# Disabled by default; PROACTIVE_SCAN_ENABLED=true, or --force for a one-off.
+python -m app.tools.worker --once --force
 ```
 
-Run the tests with `python -m pytest` (345 tests). The suite is **enforced offline**: an autouse
-fixture in `tests/conftest.py` blocks remote sockets, so an unmocked external boundary fails
-immediately at the call site instead of intermittently on a DNS blip. Loopback stays open because
-FastAPI's `TestClient` needs a local socketpair. Opt out with `@pytest.mark.allow_network`.
+Run the tests with `python -m pytest` (366 tests). The suite is **enforced offline**: an autouse
+fixture in `tests/conftest.py` blocks remote sockets **and SQLAlchemy's `Engine.connect`**, so an
+unmocked external boundary fails immediately at the call site instead of intermittently on a DNS
+blip. The database is blocked separately on purpose: psycopg2 is a C extension and libpq opens its
+own socket below Python's `socket` module, so the socket patches never saw it and real Supabase
+calls passed as merely-slow tests. Loopback stays open because FastAPI's `TestClient` needs a local
+socketpair. Opt out with `@pytest.mark.allow_network`.
 
 Manual testing is done by POSTing to `/test/message`:
 
@@ -68,7 +75,14 @@ without all of them): `GROQ_API_KEY`, `GEMINI_API_KEY`, `CHROMA_API_KEY`, `CHROM
 `CHROMA_DATABASE`, `DATABASE_URL`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`.
 
 Optional (defaulted, never block startup): `WHATSAPP_PROVIDER`, the metrics cost assumptions,
-`STAFF_NOTIFY_PROVIDER`, `HANDOFF_TTL_HOURS`, and the two dashboard tokens.
+`STAFF_NOTIFY_PROVIDER`, `HANDOFF_TTL_HOURS`, the two dashboard tokens, and the Phase 6 worker
+settings (`PROACTIVE_SCAN_ENABLED`, `PROACTIVE_SCAN_INTERVAL_SECONDS`,
+`PROACTIVE_MAX_SENDS_PER_RUN`).
+
+`PROACTIVE_SCAN_ENABLED` is the one optional setting that defaults to **inert rather than
+useful** (`false`). It is the only setting that makes the system send messages on a timer with
+nobody watching, and in Phase 7 those are real Meta quota — pulling a branch must never quietly
+start that.
 
 **Two ops tokens, deliberately separate** (`app/core/auth.py`):
 

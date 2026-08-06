@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import case, func
 
+from app.core import notification_jobs
 from app.core.database import SessionLocal
 from app.models.delivery_attempt import DeliveryAttempt
 from app.models.intervention import Intervention
@@ -26,7 +27,12 @@ from app.services import delivery_service, delivery_state
 CASE_TYPE_TICKET = "ticket"
 CASE_TYPE_REROUTE = "reroute"
 CASE_TYPE_INTERVENTION = "intervention"
-CASE_TYPES = (CASE_TYPE_TICKET, CASE_TYPE_REROUTE, CASE_TYPE_INTERVENTION)
+# Phase 6. A proactive notification that never went out belongs in the same feed as the
+# actions that did: a customer who was never warned about their delay is an ops event,
+# and the whole reason for dead-lettering was to stop that being invisible.
+CASE_TYPE_NOTIFICATION_FAILURE = "notification_failure"
+CASE_TYPES = (CASE_TYPE_TICKET, CASE_TYPE_REROUTE, CASE_TYPE_INTERVENTION,
+              CASE_TYPE_NOTIFICATION_FAILURE)
 
 # An Intervention is an audit row with no status column of its own — whether the
 # corrective action actually worked is only known once a DeliveryAttempt resolves it
@@ -55,6 +61,23 @@ def _ticket_to_case(ticket: Ticket) -> dict:
         "status": ticket.status or "open",
         "detail": ticket.reason,
         "created_at": ticket.created_at,
+    }
+
+
+def _notification_failure_to_case(failure: dict) -> dict:
+    """`retrying` is a transient blip — usually a DNS wobble — and resolves itself.
+    `dead` means the system gave up, and nobody will be told about that delay unless a
+    human acts, which is why it is in this feed rather than only in a log."""
+    attempts = failure["attempts"]
+    return {
+        "type": CASE_TYPE_NOTIFICATION_FAILURE,
+        "ref_id": f"NTF-{failure['id']:04d}",
+        "tracking_number": failure["tracking_number"],
+        "action": "notify",
+        "status": failure["status"],
+        "detail": (f"{attempts} attempt{'s' if attempts != 1 else ''} failed "
+                   f"({failure['delay_reason']}): {failure['last_error'] or 'unknown error'}"),
+        "created_at": failure["last_failed_at"],
     }
 
 
@@ -214,6 +237,12 @@ def list_cases(case_type: str | None = None, status: str | None = None,
             cases.extend(_intervention_to_case(iv, outcomes) for iv in interventions)
     finally:
         db.close()
+
+    # Its own store (app/core/notification_jobs.py), so it is fetched outside the session
+    # above rather than reaching into another module's table from here.
+    if case_type in (None, CASE_TYPE_NOTIFICATION_FAILURE):
+        cases.extend(_notification_failure_to_case(f)
+                     for f in notification_jobs.list_failures(limit=limit))
 
     # Status is filtered after shaping because an intervention's status is derived,
     # not stored — it can't be pushed down into the query.

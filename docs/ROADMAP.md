@@ -397,16 +397,49 @@ webhook signature check. Reasons recorded on each item.
       - [x] Verified in-browser end to end, both themes: **Failed → bot reschedules →
             Delivered**, with the parcel reaching `delivered` and both attempts tagged
             `ops_console`.
-- [ ] Scheduler/worker for `scan_and_notify` (cron/queue) + retries + dead-letter.
-      *Decided:* a **standalone worker process** with APScheduler inside it, not
-      in-process in uvicorn (`--reload` and multiple workers each mean duplicate
-      schedulers) and not an Upstash queue (no blocking pop over REST, and the DNS
-      flakiness on this machine would take the schedule down with it). Retries and the
-      dead-letter live in Postgres, which makes a dead-lettered notification **visible
-      in the Cases feed** — today `proactive_notifier.py`'s `except Exception: log;
-      continue` loses failures silently. ⚠️ Only Phase-6 item with a Phase 7 risk, and
-      it is quota not architecture: a timer that sends is free on `mock` and expensive
-      on `cloud`. Needs a kill-switch defaulting off and a per-run send cap.
+- [x] **Scheduler/worker for `scan_and_notify` + retries + dead-letter.** This is the
+      word "autonomous" in the one-paragraph pitch — until now the proactive loop only
+      ran when a human ran it.
+      - [x] `app/tools/worker.py`, a **standalone process**. Not in-process in uvicorn:
+            `--reload` runs two processes and `--workers N` runs N, so an in-process
+            scheduler would fire the scan two-or-N times over, and coupling "the scans
+            happen" to "the API is up" is wrong anyway. Consistent with the Phase 4
+            decision that traffic sources are separate processes and Postgres is the
+            only shared state.
+      - [x] **A plain loop, not APScheduler** — a change from the earlier note. One job,
+            one interval, one consumer; a scheduler library buys cron expressions, job
+            stores and misfire policies nothing here needs, in exchange for a dependency
+            to install on demo morning. Sleeping *after* the work also means a slow scan
+            can never stack up behind itself. Rejected an Upstash queue for the reason
+            already recorded: no blocking pop over REST, so it would be polled anyway.
+      - [x] **Retries are inherent, not scheduled.** A parcel that fails stays overdue
+            and un-notified, so the next scan retries it for free. `notification_jobs.py`
+            only *counts* the attempts, gives up after `MAX_NOTIFY_ATTEMPTS` (3) so one
+            poisoned parcel stops costing an LLM call per run, and keeps the give-ups
+            readable. A dead-lettered parcel is skipped **before** the message is
+            generated — otherwise giving up saves nothing.
+      - [x] **A dead-lettered notification is visible, not lost.** It surfaces in the
+            dashboard's case feed as a `notification_failure` ("Failed alerts" filter),
+            with `retrying` distinguished from `dead` — the first is a transient blip
+            that fixes itself, the second means a customer will never be told about
+            their delay unless someone acts. That was the actual defect:
+            `proactive_notifier.py`'s `except Exception: logger.exception(); continue`
+            put failures only in a log nobody reads. Recovery clears the record and logs
+            it, so nobody chases a dead-letter that already fixed itself.
+      - [x] ⚠️ **Phase 7 quota guard.** `PROACTIVE_SCAN_ENABLED` defaults to **false** —
+            the only optional setting in this project that defaults to inert rather than
+            useful, because it is the only one that sends on a timer unattended.
+            `PROACTIVE_MAX_SENDS_PER_RUN` bounds the blast radius if a clock or migration
+            problem suddenly makes a thousand parcels look overdue. The worker logs which
+            provider it booted against and warns when that isn't `mock`.
+      - [x] `scan_and_notify` returns counts rather than a bare int: a run that sent
+            nothing because everything dead-lettered is a very different event from one
+            that sent nothing because there was nothing to do.
+      - [x] Tests: 22 new. Store lifecycle, dead-letter skip-before-LLM, recovery,
+            the send cap, one bad parcel not stopping the scan, and the case-feed shape.
+      - [x] Verified live: three failures → `dead` → skipped by the scan → visible in
+            the case feed → cleared on recovery. Worker smoke-tested in both modes
+            (inert by default; `--force` sent 2 with the cap respected).
 - [ ] ~~Conversation history / richer memory beyond flat 30-min blob~~ — **cut.** Not a
       storage problem (`messages` already has full history), so it is only "feed the
       last N turns into the prompt". Costs ~400–600 tokens on the latency path, and the
@@ -464,6 +497,17 @@ Backs the safety/quality claims with evidence.
 
 - [ ] Link `messages` to `interactions` (shared id) so the dashboard can show latency
       per reply instead of correlating by phone + timestamp — noted while building Phase 4
+- [x] **The offline guard had a Postgres-shaped hole** (found 2026-08-06 while adding
+      the worker). `conftest.py` patches Python's `socket`, but psycopg2 is a C extension
+      and libpq opens its own socket and resolves its own DNS below that layer — so an
+      unmocked `SessionLocal()` reached Supabase for real and merely looked like a slow
+      test. A probe test that queried the live database passed. That defeated the guard
+      twice over: the network was back on the critical path (on the machine with
+      intermittent DNS), and an unmocked DB boundary passed silently instead of failing
+      at the call site. Now blocked at SQLAlchemy's `Engine.connect`, which sits above
+      the driver and is therefore driver-agnostic. **The whole suite went from ~18s to
+      ~6s** once the hidden DB calls surfaced and were mocked — they had been there all
+      along. Pinned by two tests in `test_offline_guard.py`.
 - [x] **The test suite depended on live network** despite `tests/conftest.py` claiming
       otherwise. Three causes, all fixed: `vector_store` built its Chroma Cloud client at
       *import* time (so a DNS blip failed collection of modules that never touch RAG — it's

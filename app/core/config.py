@@ -53,6 +53,23 @@ STAFF_NOTIFY_PROVIDER = os.getenv("STAFF_NOTIFY_PROVIDER", "log").strip().lower(
 # enough that an abandoned claim self-heals overnight.
 HANDOFF_TTL_HOURS = float(os.getenv("HANDOFF_TTL_HOURS", "8"))
 
+# Phase 6 — the proactive worker (app/tools/worker.py).
+#
+# Defaults to OFF, deliberately. Every other optional setting here defaults to the
+# useful value; this one defaults to inert, because it is the only setting that makes
+# the system *send messages on a timer with nobody watching*. Pulling this branch must
+# not quietly start doing that — and in Phase 7 those sends become real Meta quota
+# against the number reserved for the live defense.
+PROACTIVE_SCAN_ENABLED = os.getenv("PROACTIVE_SCAN_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+PROACTIVE_SCAN_INTERVAL_SECONDS = int(os.getenv("PROACTIVE_SCAN_INTERVAL_SECONDS", "300"))
+
+# Ceiling on sends per scan. Blast-radius control rather than throttling: if a bad
+# migration or a clock problem suddenly makes a thousand parcels look overdue, this is
+# what stops the worker messaging all thousand of them before anyone notices. 0 or unset
+# means no cap, which is the reasonable default while the channel is the mock one.
+_max_sends = int(os.getenv("PROACTIVE_MAX_SENDS_PER_RUN", "0"))
+PROACTIVE_MAX_SENDS_PER_RUN = _max_sends if _max_sends > 0 else None
+
 # Business-hours window (used for the after-hours-coverage % metric). Simplistic v1:
 # a single hour-of-day window, no weekend/day-of-week distinction.
 BUSINESS_HOURS_TIMEZONE = os.getenv("BUSINESS_HOURS_TIMEZONE", "Asia/Karachi")

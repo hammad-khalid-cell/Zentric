@@ -10,6 +10,7 @@ from app.models.delivery_attempt import DeliveryAttempt
 from app.models.intervention_outcome import InterventionOutcome
 from app.models.interaction import Interaction
 from app.models.handoff import Handoff
+from app.models.notification_failure import NotificationFailure
 
 
 def create_tables():

@@ -148,8 +148,14 @@ class FakeDB:
 
 @pytest.fixture
 def use_fake_db(monkeypatch):
-    def _install(db):
+    def _install(db, failures=None):
         monkeypatch.setattr(ops_read, "SessionLocal", lambda: db)
+        # Notification failures live in their own store with its own SessionLocal
+        # (app/core/notification_jobs.py), so patching ops_read's alone would leave a
+        # real Postgres call in the middle of the case merge. Defaults to empty so the
+        # pre-Phase-6 assertions in this file are unchanged.
+        monkeypatch.setattr(ops_read.notification_jobs, "list_failures",
+                            lambda status=None, limit=100: list(failures or []))
         return db
     return _install
 
@@ -372,3 +378,63 @@ def test_conversation_route_keeps_the_cursor_when_nothing_is_new(monkeypatch):
     result = ops_routes.get_conversation("923001234567", since_id=12)
 
     assert result["latest_id"] == 12
+
+
+# --- notification failures in the case feed (Phase 6) ------------------------
+
+
+def _failure_row(**kw):
+    row = {"id": 7, "tracking_number": "TRK10001", "delay_reason": "customer_unavailable",
+           "attempts": 3, "status": "dead", "last_error": "RuntimeError('groq is down')",
+           "first_failed_at": ago(40), "last_failed_at": ago(5)}
+    row.update(kw)
+    return row
+
+
+def test_a_dead_lettered_notification_appears_in_the_case_feed(use_fake_db):
+    """The whole reason for dead-lettering. A customer who was never warned about their
+    delay has to be visible to an ops lead, not buried in a log nobody reads."""
+    use_fake_db(FakeDB(), failures=[_failure_row()])
+
+    cases = ops_read.list_cases()
+
+    assert [c["type"] for c in cases] == ["notification_failure"]
+    assert cases[0]["ref_id"] == "NTF-0007"
+    assert cases[0]["status"] == "dead"
+    assert "groq is down" in cases[0]["detail"]
+    # Same normalised shape as every other case, so the table renders it unchanged.
+    assert set(cases[0]) == {"type", "ref_id", "tracking_number", "action", "status",
+                             "detail", "created_at"}
+
+
+def test_notification_failures_merge_by_recency_like_any_other_case(use_fake_db):
+    use_fake_db(
+        FakeDB(tickets=[make_ticket(created_at=ago(30))]),
+        failures=[_failure_row(last_failed_at=ago(1))],
+    )
+
+    cases = ops_read.list_cases()
+    assert [c["type"] for c in cases] == ["notification_failure", "ticket"]
+
+
+def test_the_case_type_filter_covers_notification_failures(use_fake_db):
+    use_fake_db(
+        FakeDB(tickets=[make_ticket()]),
+        failures=[_failure_row()],
+    )
+
+    only_failures = ops_read.list_cases(case_type="notification_failure")
+    assert [c["type"] for c in only_failures] == ["notification_failure"]
+
+    only_tickets = ops_read.list_cases(case_type="ticket")
+    assert [c["type"] for c in only_tickets] == ["ticket"]
+
+
+def test_a_still_retrying_failure_is_distinguished_from_a_give_up(use_fake_db):
+    """`retrying` is a transient blip that usually fixes itself; conflating the two
+    would either cry wolf or hide the one that matters."""
+    use_fake_db(FakeDB(), failures=[_failure_row(status="retrying", attempts=1)])
+
+    cases = ops_read.list_cases()
+    assert cases[0]["status"] == "retrying"
+    assert "1 attempt failed" in cases[0]["detail"]

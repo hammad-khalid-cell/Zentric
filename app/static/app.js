@@ -645,6 +645,11 @@
     still_failed: { tone: "critical", icon: "✕" },
     open: { tone: "warning", icon: "!" },
     requested: { tone: "warning", icon: "!" },
+    // Phase 6 notification failures. `retrying` is a transient blip that resolves
+    // itself; `dead` means a customer will never be told about their delay unless
+    // someone acts, which is the most serious thing this feed can carry.
+    retrying: { tone: "warning", icon: "↻" },
+    dead: { tone: "critical", icon: "✕" },
   };
 
   function statusCell(status) {

@@ -2,6 +2,7 @@ import logging
 from datetime import date
 
 from app.core.groq_client import safe_chat_completion
+from app.core.notification_jobs import clear_failure, dead_lettered_keys, record_failure
 from app.core.pending_actions import create_pending_action
 from app.core.whatsapp_client import send_whatsapp_message
 from app.graph.decision_rules import REASON_TO_DECISION
@@ -48,12 +49,29 @@ def _generate_notification_message(parcel: dict, decision: str, days_overdue: in
     ) or fallback
 
 
-def scan_and_notify() -> int:
+def scan_and_notify(max_sends: int | None = None) -> dict:
     """Scans for delayed parcels and proactively messages the customer once per
-    tracking_number + delay_reason pair. Meant to be run periodically (cron/manual);
-    re-running it is safe — already-notified parcels are skipped via the
-    notifications table, and ticket/reroute creation is separately deduplicated."""
+    tracking_number + delay_reason pair. Meant to be run periodically (the Phase 6
+    worker, or by hand); re-running it is safe — already-notified parcels are skipped
+    via the notifications table, and ticket/reroute creation is separately deduplicated.
+
+    `max_sends` caps how many notifications one run may send. It exists for Phase 7:
+    once `WHATSAPP_PROVIDER=cloud`, every send is real Meta quota, and a scheduled job
+    that can send unboundedly is a way to wake up having spent all of it. `None` means
+    uncapped, which is the right default for the mock channel.
+
+    Returns counts rather than a bare int — a run that sent nothing because everything
+    dead-lettered is a very different event from one that sent nothing because there was
+    nothing to do, and the worker log has to be able to tell them apart.
+    """
     sent_count = 0
+    failed_count = 0
+    dead_lettered_count = 0
+    skipped_dead = 0
+    capped = False
+
+    # One query, not one per parcel. Only ever holds give-ups, so it stays small.
+    dead_keys = dead_lettered_keys()
 
     for parcel in find_delayed_parcels():
         tracking_number = parcel["tracking_number"]
@@ -63,6 +81,16 @@ def scan_and_notify() -> int:
 
             if find_existing_notification(tracking_number, reason_code):
                 continue
+
+            # Already given up on. Skipped before any LLM call — the whole point of
+            # dead-lettering is that a poisoned parcel stops costing something per run.
+            if (tracking_number, reason_code or "unknown") in dead_keys:
+                skipped_dead += 1
+                continue
+
+            if max_sends is not None and sent_count >= max_sends:
+                capped = True
+                break
 
             # Phase 3 — this scan is what discovers the failed attempt in the first
             # place; record it (deduplicated per attempt_no via the unique constraint).
@@ -95,13 +123,42 @@ def scan_and_notify() -> int:
 
             if record_notification(tracking_number, reason_code, decision, message):
                 sent_count += 1
-        except Exception:
-            logger.exception("Proactive notification failed for parcel %s — skipping", tracking_number)
+
+            # It went out — drop any retry record. Worth logging: a parcel that failed
+            # twice and then succeeded is a transient blip, and knowing that is what
+            # stops someone chasing a dead-letter that fixed itself.
+            if clear_failure(tracking_number, reason_code):
+                logger.info("Proactive notification for %s recovered after earlier failures",
+                            tracking_number)
+
+        except Exception as error:
+            # Still swallowed per-parcel so one bad parcel can't kill the scan — but no
+            # longer *only* into a log. The failure is counted, and once it has used up
+            # its retries it is dead-lettered and shows up in the dashboard's case feed.
+            # A customer who was never warned about their delay is the single most
+            # important thing for this system to be able to admit to.
+            failed_count += 1
+            logger.exception("Proactive notification failed for parcel %s", tracking_number)
+            outcome = record_failure(tracking_number, parcel.get("delay_reason"), repr(error))
+            if outcome.get("dead"):
+                dead_lettered_count += 1
+                logger.error(
+                    "Proactive notification for %s dead-lettered after %s attempts: %r",
+                    tracking_number, outcome.get("attempts"), error,
+                )
             continue
 
-    return sent_count
+    return {
+        "sent": sent_count,
+        "failed": failed_count,
+        "dead_lettered": dead_lettered_count,
+        "skipped_dead": skipped_dead,
+        "capped": capped,
+    }
 
 
 if __name__ == "__main__":
-    count = scan_and_notify()
-    print(f"Sent {count} proactive delay notifications.")
+    result = scan_and_notify()
+    print(f"Sent {result['sent']} proactive delay notifications "
+          f"({result['failed']} failed, {result['dead_lettered']} dead-lettered, "
+          f"{result['skipped_dead']} skipped as already dead-lettered).")

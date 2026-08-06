@@ -18,10 +18,42 @@ Order of operations when pulling schema changes:
 
 ---
 
-## Phase 6 — delivery state machine + outcome provenance (2026-08-06)
+## Phase 6 — delivery state machine, provenance, proactive worker (2026-08-06)
 
-**No new tables.** Two nullable columns are added to an existing one, so this **does**
-need an `ALTER TABLE`:
+**New table** (created automatically by `create_tables`, no `ALTER TABLE` needed):
+`notification_failures` — retry accounting and the dead-letter queue for proactive
+notifications. Unique on `(tracking_number, delay_reason)`; `delay_reason` is **NOT
+NULL** with an `"unknown"` fallback, because Postgres treats NULLs as distinct in a
+unique index and a nullable column there would quietly permit duplicate rows for exactly
+the recurring case.
+
+**New environment variables** (all optional, all defaulted safely):
+
+```bash
+PROACTIVE_SCAN_ENABLED=false          # default false — see below
+PROACTIVE_SCAN_INTERVAL_SECONDS=300   # default 300
+PROACTIVE_MAX_SENDS_PER_RUN=0         # 0 / unset = no cap
+```
+
+`PROACTIVE_SCAN_ENABLED` is the one optional setting in this project that defaults to
+**inert rather than useful**, deliberately: it is the only one that makes the system send
+messages on a timer with nobody watching, and in Phase 7 those sends are real Meta quota
+against the number reserved for the live defense. Pulling this branch must not quietly
+start doing that. Run the worker with:
+
+```bash
+python -m app.tools.worker                 # loop, honouring the env config
+python -m app.tools.worker --once          # one scan then exit (cron-friendly)
+python -m app.tools.worker --once --force  # ignore the enabled flag, for a smoke test
+```
+
+It logs the WhatsApp provider before it sends anything, and warns if that provider is
+not `mock`.
+
+---
+
+Two nullable columns are also added to an existing table, so this **does** need an
+`ALTER TABLE`:
 
 ```sql
 ALTER TABLE delivery_attempts ADD COLUMN IF NOT EXISTS source      TEXT;
