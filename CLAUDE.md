@@ -51,7 +51,7 @@ python -m app.services.ingest_faqs    # embeds data/logistics_customer_support_f
 python -m app.tools.worker --once --force
 ```
 
-Run the tests with `python -m pytest` (366 tests). The suite is **enforced offline**: an autouse
+Run the tests with `python -m pytest` (374 tests). The suite is **enforced offline**: an autouse
 fixture in `tests/conftest.py` blocks remote sockets **and SQLAlchemy's `Engine.connect`**, so an
 unmocked external boundary fails immediately at the call site instead of intermittently on a DNS
 blip. The database is blocked separately on purpose: psycopg2 is a C extension and libpq opens its
@@ -77,7 +77,7 @@ without all of them): `GROQ_API_KEY`, `GEMINI_API_KEY`, `CHROMA_API_KEY`, `CHROM
 Optional (defaulted, never block startup): `WHATSAPP_PROVIDER`, the metrics cost assumptions,
 `STAFF_NOTIFY_PROVIDER`, `HANDOFF_TTL_HOURS`, the two dashboard tokens, and the Phase 6 worker
 settings (`PROACTIVE_SCAN_ENABLED`, `PROACTIVE_SCAN_INTERVAL_SECONDS`,
-`PROACTIVE_MAX_SENDS_PER_RUN`).
+`PROACTIVE_MAX_SENDS_PER_RUN`, `WHATSAPP_VERIFY_TOKEN`).
 
 `PROACTIVE_SCAN_ENABLED` is the one optional setting that defaults to **inert rather than
 useful** (`false`). It is the only setting that makes the system send messages on a timer with

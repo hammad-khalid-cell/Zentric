@@ -448,12 +448,20 @@ webhook signature check. Reasons recorded on each item.
       `REASON_TO_DECISION`. The multi-turn cases that matter are already carried
       deterministically by `pending_clarification` and `pending_actions`. Cutting it is
       the stronger defense answer, not the weaker one.
-- [ ] Auth on inbound webhook. **Split:** the `hub.verify_token` check on the GET
-      handshake is buildable now behind an optional `WHATSAPP_VERIFY_TOKEN` (today
-      `whatsapp_routes.py:58` echoes `hub.challenge` unconditionally). The
-      `X-Hub-Signature-256` check **moves to Phase 7** — building HMAC with no real
-      signature to test against only tests the implementation against itself. The
-      "admin endpoints" half of this line is already done by Phases 4/5.
+- [x] **Auth on inbound webhook — the half that doesn't need Meta.** The GET handshake
+      echoed `hub.challenge` to anyone; it now checks `hub.verify_token` (constant-time,
+      same as the dashboard tokens) and `hub.mode`, returning 403 without echoing the
+      challenge on a mismatch. **Opt-in via `WHATSAPP_VERIFY_TOKEN`**: unset, the
+      endpoint behaves exactly as before, which is a deliberate default — it returns a
+      string the caller already supplied and touches no state, so while the provider is
+      `mock` requiring a token would break the local simulator for no gain. Set it in
+      Phase 7 when the URL is public. A test asserts the verify token does **not** gate
+      inbound POSTs: Meta never sends it on a message, so gating on it would silently
+      drop real traffic.
+      The `X-Hub-Signature-256` check on inbound POSTs **stays Phase 7** — it needs the
+      App Secret, and HMAC written with no genuine signature to verify against only
+      tests the implementation against itself. The "admin endpoints" half of the original
+      line was already done by Phases 4/5. 8 new tests (374 total).
 - [ ] Realistic, larger seed dataset. *Partly answered already:* `seed_demo_history.py`
       is now idempotent and tops up, so it is the single owner of the demo window and a
       third generator would be the "two tools fighting over the same tables" risk rather

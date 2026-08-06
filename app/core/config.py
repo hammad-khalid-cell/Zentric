@@ -53,6 +53,19 @@ STAFF_NOTIFY_PROVIDER = os.getenv("STAFF_NOTIFY_PROVIDER", "log").strip().lower(
 # enough that an abandoned claim self-heals overnight.
 HANDOFF_TTL_HOURS = float(os.getenv("HANDOFF_TTL_HOURS", "8"))
 
+# Phase 6 — the token Meta echoes back when it verifies the inbound webhook URL.
+#
+# Optional, and unset means the handshake behaves exactly as it did before: it echoes
+# `hub.challenge` to anyone who asks. That is a deliberate default rather than an
+# oversight — the endpoint is harmless while `WHATSAPP_PROVIDER=mock` (it returns a
+# string the caller already supplied and touches nothing), and requiring a token by
+# default would break the local simulator and every existing test for no gain today.
+# Set it in Phase 7, when the URL is public and Meta is the only caller that should
+# succeed. The *signature* check on inbound POSTs (X-Hub-Signature-256) is separate and
+# genuinely Phase 7 work: it needs the App Secret, and implementing HMAC now with no
+# real signature to verify against would only test the implementation against itself.
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN")
+
 # Phase 6 — the proactive worker (app/tools/worker.py).
 #
 # Defaults to OFF, deliberately. Every other optional setting here defaults to the

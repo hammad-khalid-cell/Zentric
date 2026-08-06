@@ -33,7 +33,14 @@ the recurring case.
 PROACTIVE_SCAN_ENABLED=false          # default false — see below
 PROACTIVE_SCAN_INTERVAL_SECONDS=300   # default 300
 PROACTIVE_MAX_SENDS_PER_RUN=0         # 0 / unset = no cap
+WHATSAPP_VERIFY_TOKEN=                # unset = handshake unchanged; set in Phase 7
 ```
+
+`WHATSAPP_VERIFY_TOKEN` gates only Meta's **GET** verification handshake, never inbound
+message POSTs — Meta doesn't send a verify token on a message, so gating those on it
+would silently drop real traffic. Leave it unset locally: the simulator and tests use
+the same endpoint, and while `WHATSAPP_PROVIDER=mock` the handshake returns a string the
+caller already supplied and touches nothing.
 
 `PROACTIVE_SCAN_ENABLED` is the one optional setting in this project that defaults to
 **inert rather than useful**, deliberately: it is the only one that makes the system send
