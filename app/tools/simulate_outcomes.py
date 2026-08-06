@@ -21,7 +21,7 @@ import random
 from app.core.database import SessionLocal
 from app.models.intervention import Intervention
 from app.models.intervention_outcome import InterventionOutcome
-from app.services.delivery_service import record_attempt_outcome
+from app.services.delivery_service import SOURCE_SIMULATOR, record_attempt_outcome
 
 DEFAULT_SUCCESS_RATE = 0.75
 
@@ -43,7 +43,7 @@ def simulate(success_rate: float = DEFAULT_SUCCESS_RATE) -> dict:
 
     for tracking_number in tracking_numbers:
         outcome = "success" if random.random() < success_rate else "failed"
-        result = record_attempt_outcome(tracking_number, outcome)
+        result = record_attempt_outcome(tracking_number, outcome, source=SOURCE_SIMULATOR)
         if result.get("recorded"):
             resolved += 1
         else:

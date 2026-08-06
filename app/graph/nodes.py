@@ -12,7 +12,7 @@ from app.services.action_service import (
     apply_address_update,
     apply_reschedule,
 )
-from app.services.delivery_service import record_attempt_outcome
+from app.services.delivery_service import SOURCE_AGENT, record_attempt_outcome
 from app.services.parcel_data import find_parcel
 from app.core.pending_actions import get_open_pending_action, resolve_pending_action
 from app.core.handoffs import (
@@ -288,7 +288,8 @@ def decision_making_node(state: AgentState) -> AgentState:
     # record it (deduplicated per attempt_no, so repeat messages about the same
     # parcel don't double-count) so the metrics service has the raw material for
     # RTO tracking.
-    record_attempt_outcome(parcel["tracking_number"], "failed", reason_code)
+    record_attempt_outcome(parcel["tracking_number"], "failed", reason_code,
+                           source=SOURCE_AGENT)
 
     # LLM only writes the human-facing explanation, doesn't decide the action
     system_prompt = (

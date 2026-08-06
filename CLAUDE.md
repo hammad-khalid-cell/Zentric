@@ -47,7 +47,7 @@ python -m app.core.seed_data          # seeds ~50 test parcels (idempotent, skip
 python -m app.services.ingest_faqs    # embeds data/logistics_customer_support_faqs.json into Chroma
 ```
 
-Run the tests with `python -m pytest` (305 tests). The suite is **enforced offline**: an autouse
+Run the tests with `python -m pytest` (340 tests). The suite is **enforced offline**: an autouse
 fixture in `tests/conftest.py` blocks remote sockets, so an unmocked external boundary fails
 immediately at the call site instead of intermittently on a DNS blip. Loopback stays open because
 FastAPI's `TestClient` needs a local socketpair. Opt out with `@pytest.mark.allow_network`.
