@@ -14,11 +14,14 @@ from datetime import datetime, timezone
 from sqlalchemy import case, func
 
 from app.core.database import SessionLocal
+from app.models.delivery_attempt import DeliveryAttempt
 from app.models.intervention import Intervention
 from app.models.intervention_outcome import InterventionOutcome
 from app.models.message import Message
 from app.models.reroute import Reroute
+from app.models.parcel import Parcel
 from app.models.ticket import Ticket
+from app.services import delivery_service, delivery_state
 
 CASE_TYPE_TICKET = "ticket"
 CASE_TYPE_REROUTE = "reroute"
@@ -218,3 +221,116 @@ def list_cases(case_type: str | None = None, status: str | None = None,
         cases = [c for c in cases if c["status"] == status]
 
     return _newest_first(cases)[:limit]
+
+
+# --- deliveries (Phase 6) ------------------------------------------------
+
+#: Actionable parcels first. The pane exists to answer "what needs a delivery attempt
+#: run against it", so a finished parcel sorts below one that is still in play.
+_DELIVERY_SORT_PRIORITY = {
+    delivery_state.STATUS_ATTEMPT_FAILED: 0,
+    delivery_state.STATUS_OUT_FOR_DELIVERY: 1,
+    delivery_state.STATUS_RETURNED_TO_ORIGIN: 8,
+    delivery_state.STATUS_DELIVERED: 9,
+}
+_DELIVERY_SORT_DEFAULT = 5
+
+
+def _attempt_to_dict(attempt: DeliveryAttempt) -> dict:
+    return {
+        "attempt_no": attempt.attempt_no,
+        "outcome": attempt.outcome,
+        "failure_reason": attempt.failure_reason,
+        # NULL on rows written before provenance existed. Reported as-is rather than
+        # defaulted, because "we don't know" is the honest answer for those.
+        "source": attempt.source,
+        "recorded_by": attempt.recorded_by,
+        "modelled": attempt.source in delivery_service.MODELLED_SOURCES,
+        "created_at": attempt.created_at.isoformat() if attempt.created_at else None,
+    }
+
+
+def _next_attempt_availability(parcel: Parcel, attempts: list[DeliveryAttempt]) -> dict:
+    """Whether `POST /ops/parcels/{tn}/attempt` would be accepted right now, and why not.
+
+    **Advisory only** — the write endpoint stays the authority and re-checks everything.
+    This exists so the pane can explain a refusal *before* the operator clicks, rather
+    than surfacing a bare 409: the "an attempt needs a corrective action to schedule it"
+    rule is non-obvious, and a button that just fails looks broken.
+    """
+    if delivery_state.is_terminal(parcel.status):
+        return {"allowed": False, "reason": "journey_complete",
+                "detail": f"Already {parcel.status.replace('_', ' ')}."}
+
+    if not delivery_state.can_attempt_delivery(parcel.status):
+        return {"allowed": False, "reason": "not_dispatched",
+                "detail": "Still at the origin — nothing has gone out with a rider yet."}
+
+    current_attempt_no = parcel.attempt_count or 0
+    if any(a.attempt_no == current_attempt_no for a in attempts):
+        return {"allowed": False, "reason": "awaiting_reschedule",
+                "detail": "Attempt already recorded. A reschedule or address update "
+                          "has to schedule the next one."}
+
+    return {"allowed": True, "reason": None, "detail": None}
+
+
+def list_deliveries(status: str | None = None, limit: int = 50) -> list[dict]:
+    """Parcels with their delivery-attempt history — the Phase 6 deliveries pane.
+
+    Read-only, like everything else in this module: it reports the parcel state that
+    `delivery_state` produced, and never computes a transition of its own.
+    """
+    db = SessionLocal()
+    try:
+        query = db.query(Parcel)
+        if status:
+            query = query.filter(Parcel.status == status)
+        parcels = query.order_by(Parcel.expected_delivery_date.desc()).limit(limit).all()
+
+        tracking_numbers = [p.tracking_number for p in parcels]
+        attempts_by_parcel: dict[str, list[DeliveryAttempt]] = {tn: [] for tn in tracking_numbers}
+        if tracking_numbers:
+            # One query for every parcel's attempts rather than N — the pane polls.
+            rows = (
+                db.query(DeliveryAttempt)
+                .filter(DeliveryAttempt.tracking_number.in_(tracking_numbers))
+                .order_by(DeliveryAttempt.attempt_no.asc(), DeliveryAttempt.id.asc())
+                .all()
+            )
+            for row in rows:
+                attempts_by_parcel[row.tracking_number].append(row)
+
+        deliveries = []
+        for parcel in parcels:
+            attempts = attempts_by_parcel[parcel.tracking_number]
+            attempts_made = parcel.attempt_count or 0
+            deliveries.append({
+                "tracking_number": parcel.tracking_number,
+                "customer_phone": parcel.customer_phone,
+                "status": parcel.status,
+                "terminal": delivery_state.is_terminal(parcel.status),
+                "delay_reason": parcel.delay_reason,
+                "destination_city": parcel.destination_city,
+                "address_line": parcel.address_line,
+                "preferred_delivery_window": parcel.preferred_delivery_window,
+                "expected_delivery_date": parcel.expected_delivery_date.isoformat()
+                    if parcel.expected_delivery_date else None,
+                "attempt_count": attempts_made,
+                "max_attempts": delivery_state.MAX_DELIVERY_ATTEMPTS,
+                "attempts_remaining": delivery_state.attempts_remaining(attempts_made),
+                "attempts": [_attempt_to_dict(a) for a in attempts],
+                # Surfaced per parcel so the pane can mark a timeline that contains a
+                # human-triggered outcome, rather than the operator having to remember.
+                "has_modelled_outcome": any(
+                    a.source in delivery_service.MODELLED_SOURCES for a in attempts),
+                "next_attempt": _next_attempt_availability(parcel, attempts),
+            })
+    finally:
+        db.close()
+
+    deliveries.sort(key=lambda d: (
+        _DELIVERY_SORT_PRIORITY.get(d["status"], _DELIVERY_SORT_DEFAULT),
+        d["expected_delivery_date"] or "",
+    ))
+    return deliveries

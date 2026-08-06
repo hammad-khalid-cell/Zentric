@@ -11,13 +11,17 @@ from app.services.delivery_state import (
     MAX_DELIVERY_ATTEMPTS,
     OUTCOME_FAILED,
     OUTCOME_SUCCESS,
+    STATUS_ARRIVED_AT_FACILITY,
     STATUS_ATTEMPT_FAILED,
+    STATUS_BOOKED,
     STATUS_DELIVERED,
     STATUS_IN_TRANSIT,
     STATUS_OUT_FOR_DELIVERY,
+    STATUS_PICKED_UP,
     STATUS_RETURNED_TO_ORIGIN,
     TERMINAL_STATUSES,
     attempts_remaining,
+    can_attempt_delivery,
     is_terminal,
     next_status,
 )
@@ -90,3 +94,33 @@ def test_the_machine_is_pure():
     the RTO number be recomputed from the attempt log and come out the same."""
     calls = [next_status(STATUS_OUT_FOR_DELIVERY, OUTCOME_FAILED, 2) for _ in range(50)]
     assert len(set(calls)) == 1
+
+
+# --- who may report an attempt ------------------------------------------------
+
+
+def test_a_parcel_still_at_the_origin_cannot_have_been_attempted():
+    """A rider cannot have tried to deliver a parcel that hasn't left the warehouse, so
+    the ops console must not be able to mark one delivered — it feeds the RTO figure."""
+    for status in (STATUS_BOOKED, STATUS_PICKED_UP):
+        assert not can_attempt_delivery(status)
+
+
+def test_a_dispatched_parcel_can_be_attempted():
+    for status in (STATUS_IN_TRANSIT, STATUS_ARRIVED_AT_FACILITY,
+                   STATUS_OUT_FOR_DELIVERY, STATUS_ATTEMPT_FAILED):
+        assert can_attempt_delivery(status)
+
+
+@pytest.mark.parametrize("terminal", sorted(TERMINAL_STATUSES))
+def test_a_finished_parcel_cannot_be_attempted(terminal):
+    assert not can_attempt_delivery(terminal)
+
+
+def test_the_dispatch_rule_is_narrower_than_the_terminal_rule():
+    """They are deliberately different rules. The scanner records organic failures on
+    parcels at any status — most first-failure rows come from there — so if this rule
+    applied everywhere it would starve the RTO metric of its real inputs. Only callers
+    reporting a *rider* attempt opt in."""
+    assert not is_terminal(STATUS_BOOKED)
+    assert not can_attempt_delivery(STATUS_BOOKED)

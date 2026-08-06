@@ -18,9 +18,19 @@ Three properties this surface must keep (`docs/PROJECT_PLAN.md` §5.2):
    resolving a resolved one, returns 409 rather than silently rewriting `claimed_at` /
    `resolved_at` and corrupting the trail.
 
-Nothing here touches a parcel, reveals parcel data, or bypasses the customer-side
-ownership check in `tracking_agent.py`. The only state these endpoints move is who owns
-a conversation.
+Phase 6 added the delivery-attempt endpoint, which **does** move a parcel — so the older
+claim that "nothing here touches a parcel" no longer holds and has been replaced rather
+than quietly left to rot. What still holds, and matters more:
+
+- **The customer-side ownership check is untouched.** `tracking_agent.py` is what
+  decides whether a *customer* may see a parcel, and nothing here relaxes it. These
+  endpoints are reachable only with the ops write token, which is not something a
+  customer has.
+- **No endpoint here decides an outcome.** The delivery route reports what happened to
+  an attempt; `delivery_state.next_status` — a pure lookup — decides what that means for
+  the parcel (§5.1). A caller cannot pick the parcel's next state.
+- **Anything that moves the RTO figure records where it came from.** See
+  `delivery_service.MODELLED_SOURCES`.
 """
 from typing import Literal
 
@@ -101,6 +111,9 @@ _ATTEMPT_REFUSALS = {
     "parcel_not_found": (404, "No parcel with tracking number {tracking_number}."),
     "parcel_journey_complete": (
         409, "Parcel {tracking_number} is already '{status}' — its journey has ended."),
+    "not_dispatched": (
+        409, "Parcel {tracking_number} is still '{status}' — it hasn't gone out with a "
+             "rider yet, so there is no attempt to report."),
     "duplicate_attempt": (
         409, "Attempt already recorded for the current attempt number on "
              "{tracking_number}. A corrective action (reschedule / address update) has "
@@ -131,6 +144,10 @@ def record_delivery_attempt(payload: AttemptOutcomeRequest,
         payload.failure_reason if payload.outcome == "failed" else None,
         source=delivery_service.SOURCE_OPS_CONSOLE,
         recorded_by=payload.clean_actor(),
+        # This endpoint represents a rider having tried, so it is bounded by where the
+        # parcel actually is — marking a parcel that never left the origin "delivered"
+        # would be indefensible, and it feeds the RTO figure.
+        require_dispatched=True,
     )
 
     if not result.get("recorded"):

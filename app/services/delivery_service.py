@@ -42,7 +42,8 @@ def _find_unresolved_intervention(db, tracking_number: str) -> Intervention | No
 
 
 def record_attempt_outcome(tracking_number: str, outcome: str, failure_reason: str | None = None,
-                           *, source: str, recorded_by: str | None = None) -> dict:
+                           *, source: str, recorded_by: str | None = None,
+                           require_dispatched: bool = False) -> dict:
     """Record a delivery attempt's outcome for a parcel (attempt_no = the parcel's
     current attempt_count, so it lines up with whatever apply_reschedule /
     apply_address_update last set). Deduplicated per (tracking_number, attempt_no) —
@@ -75,6 +76,13 @@ def record_attempt_outcome(tracking_number: str, outcome: str, failure_reason: s
         if delivery_state.is_terminal(parcel.status):
             return {"recorded": False, "reason": "parcel_journey_complete",
                     "status": parcel.status}
+
+        # Opt-in, for callers reporting that a *rider* attempted delivery. The scanner
+        # deliberately doesn't set this: it records failures on parcels still in transit,
+        # and that is where most organic first-failure rows come from. See
+        # delivery_state.can_attempt_delivery.
+        if require_dispatched and not delivery_state.can_attempt_delivery(parcel.status):
+            return {"recorded": False, "reason": "not_dispatched", "status": parcel.status}
 
         attempt = DeliveryAttempt(
             tracking_number=parcel.tracking_number,

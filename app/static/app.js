@@ -36,6 +36,9 @@
     days: 14,
     caseType: "",
     handoffStatus: "",
+    deliveryStatus: "",
+    deliverySignature: null,
+    caseSignature: null,
     selectedPhone: null,
     threadCursor: null,
     convoSignature: null,   // cheap change-detect so the poll doesn't rebuild an unchanged list
@@ -47,6 +50,20 @@
   };
 
   const $ = (id) => document.getElementById(id);
+
+  /* Drop a response that a newer request has already superseded.
+   *
+   * The poll tiers self-schedule so they can't overlap themselves, but a *write* also
+   * refreshes its pane, and that refresh races whatever poll is already in flight. On a
+   * slow query the poll's older response lands last and repaints the pre-write state —
+   * so clicking "Delivered" appeared to do nothing until the next tick. Stamp each
+   * request and let only the newest one render. */
+  const generations = {};
+  function claimLatest(name) {
+    const gen = (generations[name] || 0) + 1;
+    generations[name] = gen;
+    return () => generations[name] === gen;
+  }
 
   // --- api ---------------------------------------------------------------
 
@@ -641,6 +658,14 @@
 
   function renderCases(cases) {
     const container = $("cases");
+
+    // Capped and scrollable since Phase 6, so it inherits the conversation list's rule:
+    // don't reset the reader's scroll every tick.
+    const signature = cases.map((c) => `${c.type}:${c.ref_id}:${c.status}`).join("|");
+    if (signature === state.caseSignature) return;
+    state.caseSignature = signature;
+    const scrollTop = container.scrollTop;
+
     clear(container);
     if (!cases.length) {
       container.appendChild(el("div", { class: "empty", text: "No cases recorded yet." }));
@@ -667,6 +692,7 @@
     }
     table.appendChild(body);
     container.appendChild(table);
+    container.scrollTop = scrollTop;
   }
 
   // --- handoff queue (the only writing surface) --------------------------
@@ -773,9 +799,202 @@
   }
 
   async function refreshHandoffs() {
+    const isLatest = claimLatest("handoffs");
     const query = state.handoffStatus ? `?status=${state.handoffStatus}&limit=50` : "?limit=50";
     const payload = await api(`/ops/handoffs${query}`);
+    if (!isLatest()) return;   // same race as deliveries: take/resolve refreshes too
     renderHandoffs(payload.handoffs);
+  }
+
+  // --- deliveries: the mock delivery management system (Phase 6) ----------
+  //
+  // The parcel's own journey, which until now changed invisibly. Note the deliberate
+  // asymmetry with every other pane: an outcome recorded from here is flagged as
+  // manually triggered, because these rows feed the RTO figure and a headline number a
+  // human can move by clicking has to be able to say which inputs were clicked.
+
+  const DELIVERY_TONES = {
+    delivered: { tone: "good", icon: "✓", label: "Delivered" },
+    returned_to_origin: { tone: "critical", icon: "×", label: "Returned to origin" },
+    attempt_failed: { tone: "warning", icon: "!", label: "Attempt failed" },
+    out_for_delivery: { tone: "neutral", icon: "→", label: "Out for delivery" },
+  };
+
+  /** Identity is one value, not one per pane — whichever box you type in, both follow. */
+  function syncActor(value) {
+    for (const id of ["actor-input", "delivery-actor-input"]) {
+      const input = $(id);
+      if (input && input.value !== value) input.value = value;
+    }
+  }
+
+  function currentActor() {
+    return ($("delivery-actor-input").value || $("actor-input").value || "").trim();
+  }
+
+  function attemptChip(attempt) {
+    const failed = attempt.outcome !== "success";
+    const label = failed
+      ? `✗ ${attempt.failure_reason ? titleCase(attempt.failure_reason) : "Failed"}`
+      : "✓ Delivered";
+    const chip = el("span", {
+      class: "attempt-chip",
+      "data-outcome": failed ? "failed" : "success",
+      text: label,
+    });
+    // Provenance, visible rather than buried in the table. An untagged row predates the
+    // provenance column, so it says so instead of claiming to be observed.
+    if (attempt.modelled) {
+      chip.appendChild(el("span", {
+        class: "chip-mark", text: "M",
+        title: `Manually triggered (${attempt.source}${attempt.recorded_by ? " by " + attempt.recorded_by : ""})`,
+      }));
+    } else if (!attempt.source) {
+      chip.appendChild(el("span", { class: "chip-mark muted", text: "?", title: "Provenance not recorded" }));
+    }
+    return chip;
+  }
+
+  function attemptButton(delivery, outcome, label) {
+    const button = el("button", { class: "btn small", type: "button", text: label });
+    button.addEventListener("click", async () => {
+      const error = $("delivery-error");
+      const actor = currentActor();
+      if (!actor) {
+        error.textContent = "Enter who you are before running an attempt.";
+        $("delivery-actor-input").focus();
+        return;
+      }
+      if (!state.writeToken) {
+        error.textContent = "No write token — sign in again with DASHBOARD_WRITE_TOKEN to run attempts.";
+        return;
+      }
+      // The write plus its refresh is ~2s against a remote Postgres, and a row that sits
+      // there unchanged reads as a dead button — especially with an audience watching.
+      // Say what's happening rather than optimistically painting an outcome that hasn't
+      // been recorded yet; this pane's whole point is that it reflects real state.
+      const cell = button.parentElement;
+      const siblings = [...cell.querySelectorAll("button")];
+      siblings.forEach((b) => { b.disabled = true; });
+      const pending = el("div", { class: "sub", text: "Recording…" });
+      cell.appendChild(pending);
+
+      try {
+        const body = { actor, outcome };
+        if (outcome === "failed") body.failure_reason = delivery.delay_reason || "customer_unavailable";
+        await api(`/ops/parcels/${encodeURIComponent(delivery.tracking_number)}/attempt`, {
+          method: "POST", write: true, body: JSON.stringify(body),
+        });
+        error.textContent = "";
+        await refreshDeliveries();
+      } catch (err) {
+        // 404/409 both carry a server-written explanation — show it verbatim rather
+        // than a generic failure, since the "needs a reschedule first" rule is the
+        // non-obvious one an operator will hit.
+        error.textContent = (err.status === 409 || err.status === 404)
+          ? err.message
+          : err.status === 401
+            ? "That write token was rejected."
+            : "Could not record the attempt — retrying shortly.";
+        if (err.status === 409 || err.status === 404) await refreshDeliveries();
+      } finally {
+        // The refresh usually replaces this row outright; these matter on the paths
+        // where it doesn't (an error, or an unchanged signature).
+        pending.remove();
+        siblings.forEach((b) => { b.disabled = false; });
+      }
+    });
+    return button;
+  }
+
+  function renderDeliveries(rows) {
+    const container = $("deliveries");
+
+    // Same trap the conversation list fell into, and now reachable here because this
+    // pane is a capped scroll box too: rebuilding it every tick threw away the
+    // operator's scroll position mid-read. Skip the rebuild when nothing changed, and
+    // preserve scroll across the rebuilds that do happen. The signature covers exactly
+    // what is rendered — status, attempt count, history length, and whether the buttons
+    // are available.
+    const signature = rows.map((d) =>
+      `${d.tracking_number}:${d.status}:${d.attempt_count}:${d.attempts.length}:${d.next_attempt.allowed}`
+    ).join("|");
+    if (signature === state.deliverySignature) return;
+    state.deliverySignature = signature;
+    const scrollTop = container.scrollTop;
+
+    clear(container);
+    if (!rows.length) {
+      container.appendChild(el("div", { class: "empty", text: "No parcels match this filter." }));
+      return;
+    }
+
+    const table = el("table");
+    const head = el("tr");
+    for (const label of ["Parcel", "Status", "Attempts", "History", "Action"]) {
+      head.appendChild(el("th", { text: label }));
+    }
+    table.appendChild(el("thead", {}, [head]));
+
+    const body = el("tbody");
+    for (const delivery of rows) {
+      const { tone, icon, label } = DELIVERY_TONES[delivery.status]
+        || { tone: "neutral", icon: "•", label: titleCase(delivery.status) };
+      const row = el("tr");
+
+      row.appendChild(el("td", {}, [
+        el("div", { class: "mono", text: delivery.tracking_number }),
+        el("div", { class: "sub", text: delivery.destination_city || "—" }),
+      ]));
+
+      row.appendChild(el("td", {}, [
+        el("span", { class: "status", "data-tone": tone }, [
+          el("span", { class: "status-icon", text: icon, "aria-hidden": "true" }),
+          el("span", { text: label }),
+        ]),
+      ]));
+
+      // "1 of 3" — an operator has to see a parcel running out of road before it
+      // becomes a return, which is the whole point of intervening.
+      const attemptsCell = el("td", {}, [
+        el("div", { class: "mono", text: `${delivery.attempt_count} of ${delivery.max_attempts}` }),
+      ]);
+      if (!delivery.terminal && delivery.attempts_remaining <= 1) {
+        attemptsCell.appendChild(el("div", { class: "warn-note", text: "last attempt" }));
+      }
+      row.appendChild(attemptsCell);
+
+      const history = el("td", {}, [
+        delivery.attempts.length
+          ? el("div", { class: "chips" }, delivery.attempts.map(attemptChip))
+          : el("span", { class: "muted", text: "No attempts yet" }),
+      ]);
+      row.appendChild(history);
+
+      const actions = el("td");
+      if (delivery.next_attempt.allowed) {
+        actions.appendChild(attemptButton(delivery, "success", "Delivered"));
+        actions.appendChild(attemptButton(delivery, "failed", "Failed"));
+      } else {
+        // Say why, not just nothing — a button that silently isn't there reads as a bug.
+        actions.appendChild(el("span", { class: "muted", text: "—" }));
+        actions.appendChild(el("div", { class: "sub", text: delivery.next_attempt.detail }));
+      }
+      row.appendChild(actions);
+
+      body.appendChild(row);
+    }
+    table.appendChild(body);
+    container.appendChild(table);
+    container.scrollTop = scrollTop;
+  }
+
+  async function refreshDeliveries() {
+    const isLatest = claimLatest("deliveries");
+    const query = state.deliveryStatus ? `?status=${state.deliveryStatus}&limit=50` : "?limit=50";
+    const payload = await api(`/ops/deliveries${query}`);
+    if (!isLatest()) return;   // a write already refreshed this pane with newer data
+    renderDeliveries(payload.deliveries);
   }
 
   /** Fast tier: the live conversation surface. */
@@ -791,6 +1010,7 @@
     const cases = await api(`/ops/cases${typeQuery}`);
     renderCases(cases.cases);
     await refreshHandoffs();
+    await refreshDeliveries();
   }
 
   /** Everything — initial load and returning to the tab, where staleness is likeliest. */
@@ -1044,6 +1264,21 @@
       b.setAttribute("aria-pressed", String(b === button)));
     guarded(refreshHandoffs);
   });
+
+  $("delivery-seg").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-status]");
+    if (!button) return;
+    state.deliveryStatus = button.dataset.status;
+    $("delivery-seg").querySelectorAll("button").forEach((b) =>
+      b.setAttribute("aria-pressed", String(b === button)));
+    guarded(refreshDeliveries);
+  });
+
+  // One identity across both writing panes: whichever box you type in, the other
+  // follows, so an attempt and a handoff are never attributed to two different names.
+  for (const id of ["actor-input", "delivery-actor-input"]) {
+    $(id).addEventListener("input", (event) => syncActor(event.target.value));
+  }
 
   $("case-seg").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-type]");

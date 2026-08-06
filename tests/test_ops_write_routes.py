@@ -237,7 +237,11 @@ def attempts(monkeypatch):
     """Replace the delivery service so the route is tested without a database."""
     calls = []
 
-    def fake_record(tracking_number, outcome, failure_reason=None, *, source, recorded_by=None):
+    def fake_record(tracking_number, outcome, failure_reason=None, *, source,
+                    recorded_by=None, require_dispatched=False):
+        assert require_dispatched is True, (
+            "the ops console reports a rider attempt, so it must not be able to mark a "
+            "parcel that never left the origin as delivered")
         calls.append({"tracking_number": tracking_number, "outcome": outcome,
                       "failure_reason": failure_reason, "source": source,
                       "recorded_by": recorded_by})

@@ -370,12 +370,33 @@ webhook signature check. Reasons recorded on each item.
             still cannot record a delivery**.
       - [x] Verified end-to-end against live Postgres: reschedule → `out_for_delivery`,
             success → `delivered`, finished parcel → 409, provenance written.
-      - [ ] Dashboard pane: parcel state, attempt history, and the button.
-      - [ ] **Known demo wrinkle:** a second attempt at the same `attempt_count` is a
-            409 by design (an attempt needs a corrective action to schedule it), and
-            many seeded parcels already carry an untagged `attempt_no=0` row, so the
-            button will refuse on them until something reschedules. The UI has to say
-            *why* rather than just failing.
+      - [x] `GET /ops/deliveries` (read router, still GET-only) + Deliveries pane:
+            parcel, state, `n of 3` attempts with a **"last attempt"** warning, the
+            attempt history as chips, and the Delivered/Failed buttons. Each chip carries
+            its provenance — `M` for manually triggered (with who, on hover), `?` for
+            rows written before provenance existed. A refusal is **explained in the row**
+            rather than surfacing a bare 409, because "an attempt needs a corrective
+            action to schedule it" is the non-obvious rule an operator hits first.
+            `next_attempt` is advisory; the write endpoint re-checks and stays the
+            authority.
+      - [x] **The ops console cannot mark a parcel that never left the origin
+            "delivered."** `can_attempt_delivery` excludes `booked`/`picked_up`, and it
+            is **opt-in** (`require_dispatched=True`) rather than global: the scanner
+            legitimately records failures on parcels still `in_transit`, and applying
+            this everywhere would starve the RTO metric of its organic first failures.
+            Two different real events, two different rules.
+      - [x] Three UI defects found by using it, all introduced by this phase's scroll
+            boxes and writes: the 10s poll **reset the pane's scroll mid-read** (now
+            signature-change-detected and scroll-preserving, same as the conversation
+            list — and `#cases` needed it too once it gained a scroll box); a **write's
+            refresh raced the in-flight poll**, so a slow response could repaint the
+            pre-write state (now generation-stamped, newest render wins); and a ~2s
+            round trip left the row looking dead after a click (now shows *Recording…*
+            — deliberately not an optimistic paint of an outcome that hasn't been
+            recorded, since this pane's whole claim is that it reflects real state).
+      - [x] Verified in-browser end to end, both themes: **Failed → bot reschedules →
+            Delivered**, with the parcel reaching `delivered` and both attempts tagged
+            `ops_console`.
 - [ ] Scheduler/worker for `scan_and_notify` (cron/queue) + retries + dead-letter.
       *Decided:* a **standalone worker process** with APScheduler inside it, not
       in-process in uvicorn (`--reload` and multiple workers each mean duplicate

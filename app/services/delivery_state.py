@@ -52,9 +52,31 @@ OUTCOME_SUCCESS = "success"
 OUTCOME_FAILED = "failed"
 
 
+#: Still at the origin — nothing has gone out with a rider yet.
+AT_ORIGIN_STATUSES = frozenset({STATUS_BOOKED, STATUS_PICKED_UP})
+
+
 def is_terminal(status: str | None) -> bool:
     """Has this parcel's journey ended? Nothing may transition out of a terminal state."""
     return status in TERMINAL_STATUSES
+
+
+def can_attempt_delivery(status: str | None) -> bool:
+    """Could a rider plausibly have attempted delivery on a parcel in this state?
+
+    Narrower than "not terminal", and deliberately *not* the rule the whole system uses.
+    Two different real events write a `DeliveryAttempt`:
+
+    - the scanner noticing an overdue parcel — legitimate at any status, including
+      `in_transit`, and that is where most first-failure rows come from;
+    - a courier reporting back that a rider tried — which requires the parcel to have
+      actually left the origin.
+
+    Only the second is bounded by this, which is why callers opt in
+    (`record_attempt_outcome(..., require_dispatched=True)`) rather than it applying
+    everywhere and silently starving the RTO metric of its organic failures.
+    """
+    return not is_terminal(status) and status not in AT_ORIGIN_STATUSES
 
 
 def next_status(current_status: str | None, outcome: str, attempts_made: int) -> str | None:
