@@ -23,6 +23,10 @@
   --critical: #d03b3b;
   --success-text: #006300;
   --shadow: 0 1px 2px rgba(11, 11, 11, 0.04);
+
+  /* Shared height for the scrolling panes in the Operations grid. The two columns
+     are meant to end together, so this is one token rather than three literals. */
+  --pane-h: 420px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -341,10 +345,31 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .ops-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* Cases was the only unbounded pane in this grid: at 40+ rows it ran roughly 3x the
+   height of the Conversations card beside it, leaving a large dead gap under the left
+   column. Cap it to the same height the conversation list and thread already use so
+   both columns end together, and scroll it in place like they do. */
+#cases {
+  max-height: var(--pane-h);
+  overflow-y: auto;
+}
+
+/* The column labels have to survive that scroll. `border-collapse: collapse` drops a
+   sticky cell's own border, so the rule under the header is painted as an inset
+   shadow instead — otherwise rows slide up under a header with no separator. */
+#cases thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-1);
+  border-bottom: 0;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
 .convo-layout { display: grid; grid-template-columns: minmax(0, 240px) minmax(0, 1fr); gap: 12px; }
 @media (max-width: 700px) { .convo-layout { grid-template-columns: minmax(0, 1fr); } }
 
-.convo-list { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.convo-list { max-height: var(--pane-h); overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 
 .convo-item {
   display: block;
@@ -370,7 +395,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 
 .thread {
-  max-height: 420px;
+  max-height: var(--pane-h);
   overflow-y: auto;
   display: flex;
   flex-direction: column;

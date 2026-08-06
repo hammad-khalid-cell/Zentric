@@ -95,6 +95,15 @@
     return `${sign}PKR ${num(abs)}`;
   }
 
+  /* Axis tick in thousands. Keeps one decimal for a non-whole K so adjacent ticks
+     stay distinguishable: a 2000 axis ticks at 0/500/1000/1500/2000, and rounding
+     to whole thousands printed BOTH 1500 and 2000 as "2K". */
+  const kLabel = (v) => {
+    if (v < 1000) return num(v);
+    const k = v / 1000;
+    return `${Number.isInteger(k) ? k : k.toFixed(1)}K`;
+  };
+
   const pct = (v) => `${(v ?? 0).toFixed(1)}%`;
   const seconds = (ms) => `${((ms || 0) / 1000).toFixed(1)}s`;
 
@@ -279,7 +288,7 @@
 
     const { root, x0, y0, plotW, plotH } = frame;
     const max = niceMax(Math.max(...rows.map((r) => r.total)));
-    drawAxes(frame, axisTicks(max), (v) => (v >= 1000 ? `${Math.round(v / 1000)}K` : num(v)));
+    drawAxes(frame, axisTicks(max), kLabel);
     drawXLabels(frame, rows);
 
     const band = plotW / rows.length;
