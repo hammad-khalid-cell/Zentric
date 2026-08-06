@@ -216,11 +216,22 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
         token, not three literals) and scrolled in place, with a sticky `thead` — the
         header is drawn with an inset shadow because `border-collapse: collapse` drops
         a sticky cell's own border.
-- [ ] **Demo history goes stale on its own** (found 2026-08-06). `seed_demo_history.py`
-      writes a fixed window ending *yesterday*, so six days after a run the right third
-      of both charts is empty and reads as "the system stopped working last week." Not
-      fixed here — it needs a decision (re-run before the defense vs. make the window
-      relative at read time), and it overlaps the Phase 6 seed-data item.
+- [x] **Demo history went stale on its own** (found and fixed 2026-08-06).
+      `seed_demo_history.py` writes a window ending *yesterday*, so it ages out at a day
+      per day; six days after the original run the right third of both charts was empty
+      and read as "the system stopped working last week." The reason nobody topped it up
+      is that **re-running it wasn't safe**: it always planned the full window starting
+      its counter at 1, so a second run doubled the overlapping days and reissued
+      `DEMO....` tracking numbers that `delivery_attempts` already held under its unique
+      `(tracking_number, attempt_no)` — an IntegrityError mid-write. A plain run now
+      fills only the missing days (`skip_dates`) and continues the numbering past what
+      exists (`seq_start`), so **re-running before a demo is the intended habit** and a
+      second run in the same day is a no-op. Both new arguments are plain values, so
+      `plan_history` stays pure and DB-free; `existing_demo_state()` is the impure half,
+      and it buckets by *local* date exactly as the trend chart does. `--fresh` keeps
+      the old whole-window behaviour for a wiped slate. Verified live: filled 29 Jul–5
+      Aug (8 days, 79 interactions), re-ran clean, both charts full end to end, and the
+      RTO figure now rests on n=37 rather than n=16. 3 new tests (305 total).
 
 **Charts** follow the dataviz method: two categorical slots (blue = support lever,
 orange = RTO lever, validated in both light and dark — worst adjacent CVD ΔE 24.7/26.8),
@@ -319,7 +330,11 @@ resolving hands the thread back and the bot replies again. All 19 checks passed.
 - [ ] Conversation history / richer memory beyond flat 30-min blob
 - [ ] Auth on inbound webhook + admin endpoints
 - [ ] Mock "delivery management system" so reroute/reschedule visibly changes state
-- [ ] Realistic, larger seed dataset
+- [ ] Realistic, larger seed dataset. *Partly answered already:* `seed_demo_history.py`
+      is now idempotent and tops up, so it is the single owner of the demo window and a
+      third generator would be the "two tools fighting over the same tables" risk rather
+      than a fix. Volume comes from `--days` / `--max-per-day` on that tool. What is
+      genuinely still open is honesty about sample size, not size itself.
 - [ ] Observability: structured logging, basic metrics/tracing
 - [ ] Delivery-receipt handling (once real API exists)
 
