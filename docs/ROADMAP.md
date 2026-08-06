@@ -6,7 +6,7 @@
 > progress · `[x]` done. Priorities: **P0** (blocks the value prop) · P1 (makes it
 > worth it / defensible) · P2 (robustness & polish).
 
-Last updated: 2026-07-29 (Phase 5 — human handoff, bot suppression, ops write API).
+Last updated: 2026-08-06 (first rendered dashboard review; response-honesty fix).
 
 ---
 
@@ -189,8 +189,8 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
       ⚠️ **This is MODELLED history, not observed** — rows are marked (`DEMO`-prefixed
       tracking numbers, reserved `92300900xxxx` phones), removable with `--wipe`, and must
       be presented as modelled, exactly like `RTO_COST_PKR` (`PROJECT_PLAN.md` §3).
-- [~] Eyeball the rendered dashboard in a browser — **still open**, no browser tooling
-      available in either session. A code-read pass (the half that doesn't need eyes)
+- [x] Eyeball the rendered dashboard in a browser — **done 2026-08-06**, findings below.
+      A code-read pass (the half that doesn't need eyes)
       found and fixed three things screenshots wouldn't have shown anyway:
       the conversation list is a 420px scroll box that the 4s poll tore down and rebuilt
       unconditionally, resetting scroll position and dropping keyboard focus every tick
@@ -198,12 +198,29 @@ Goal: the "worth it" artifact + demo centerpiece + defense metrics visualization
       demo history added ~40 threads; and `selectConversation` (click) and `runRoi`
       (debounce timer) were unguarded async, so a DNS blip left an unhandled rejection
       with the status pill still reading "Live" (both wrapped in `guarded` now).
-      **Still needs a human to look at it**: layout, dark mode, long Roman-Urdu strings
-      in bubbles, and the charts at real widths. Attempted again 2026-07-31 with browser
-      tooling available, but the Chrome extension wasn't connected — deferred by
-      decision, not blocked on code. Everything *checkable* without eyes now is: all
-      pages and assets serve 200, every ops endpoint returns data, and an
-      unauthenticated `/ops/*` read is refused with 401.
+      Attempted 2026-07-31 with browser tooling available, but the Chrome extension
+      wasn't connected. **Finally rendered and inspected 2026-08-06** (extension
+      connected, live server, real Postgres). What the eyes confirmed: light *and* dark
+      both read correctly, Roman-Urdu bubbles render clean at full width, the Handoffs
+      pane and its Take/Resolve buttons work (first time seen), and the ROI hero
+      re-derives the plan's own figures on screen (PKR 35.3M + 65.6M). `Resolve`
+      showing on an `open` row looked wrong but is deliberate — `resolve_handoff`
+      allows it for a case settled out of band. What the eyes caught that no code read
+      would have:
+      - **Duplicate axis label.** A 2000-max axis ticks at 0/500/1000/1500/2000 and the
+        formatter rounded to whole thousands, printing `1.5K` and `2K` both as "2K".
+        Now `kLabel()` keeps one decimal for a non-whole K.
+      - **Dead space under Conversations.** `#cases` was the only unbounded pane in
+        `.ops-grid`; at 40+ rows it ran ~3x the height of the card beside it. Capped to
+        the shared `--pane-h` the conversation list and thread already used (now one
+        token, not three literals) and scrolled in place, with a sticky `thead` — the
+        header is drawn with an inset shadow because `border-collapse: collapse` drops
+        a sticky cell's own border.
+- [ ] **Demo history goes stale on its own** (found 2026-08-06). `seed_demo_history.py`
+      writes a fixed window ending *yesterday*, so six days after a run the right third
+      of both charts is empty and reads as "the system stopped working last week." Not
+      fixed here — it needs a decision (re-run before the defense vs. make the window
+      relative at read time), and it overlaps the Phase 6 seed-data item.
 
 **Charts** follow the dataviz method: two categorical slots (blue = support lever,
 orange = RTO lever, validated in both light and dark — worst adjacent CVD ΔE 24.7/26.8),
@@ -342,6 +359,21 @@ Backs the safety/quality claims with evidence.
       invoke. `conftest.py` now **enforces** offline with an autouse socket block, so this
       class of regression fails loudly at the call site instead of intermittently. 209
       passed in 5.6s with no network. Opt out per-test with `@pytest.mark.allow_network`.
+- [x] **The bot claimed to be human** (found 2026-08-06 while smoke-testing the Handoffs
+      pane). "I want to talk to a real person" got back *"I'm here to help and I'm a real
+      person"* — which contradicts §5's trust thesis and undercuts the whole Phase 5
+      handoff feature at the exact moment it matters. Two causes, both fixed:
+      `response_generation_node`'s system prompt described the bot only as "a support
+      assistant" and never said it was automated or forbade posing as staff; and the
+      frustration/handoff guidance was assigned to a `context_parts_prefix` local that
+      was **never read**, so this case reached the model with no instruction at all and
+      it improvised. The note is now joined into the prompt (after the untrusted
+      customer message, matching the other situation notes) and states what the bot
+      *is*. Verified live in both registers — English *"I'm the automated assistant"*,
+      Roman Urdu *"Main automated assistant hoon"* — with language mirroring intact.
+      Pinned by `tests/test_response_honesty.py` (7 new, 302 total), which asserts on
+      the prompts rather than on generated text, including a regression guard that the
+      note actually reaches the user prompt.
 - [ ] Roman-Urdu code-switched labeled dataset + classification accuracy report (optional novelty artifact)
 - [ ] Merchant-facing notifications (COD sale protected)
 - [ ] Address geocoding/validation
