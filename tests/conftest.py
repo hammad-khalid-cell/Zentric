@@ -15,6 +15,8 @@ needs the network can opt out with `@pytest.mark.allow_network`.
 """
 import os
 import socket
+
+from sqlalchemy.engine import Engine
 from datetime import date, timedelta
 
 import pytest
@@ -102,6 +104,27 @@ def no_network(request, monkeypatch):
     monkeypatch.setattr(socket.socket, "connect_ex", _guarded_connect_ex)
     monkeypatch.setattr(socket, "create_connection", _guarded_create_connection)
     monkeypatch.setattr(socket, "getaddrinfo", _guarded_getaddrinfo)
+
+    # Postgres slipped straight through all of the above. psycopg2 is a C extension and
+    # libpq opens its own socket and resolves its own DNS below the Python `socket`
+    # module, so none of these patches ever see it — an unmocked `SessionLocal()` reached
+    # Supabase for real and merely looked like a slow test. That defeats the point of the
+    # guard twice over: it puts the network back on the critical path (this is the
+    # machine with intermittent DNS), and it lets an unmocked DB boundary pass silently
+    # instead of failing at the call site.
+    #
+    # Blocked at SQLAlchemy's own seam instead, which is above the driver and so
+    # driver-agnostic. Tests that want DB behaviour monkeypatch `SessionLocal` in the
+    # module under test, exactly as they already do.
+    _real_engine_connect = Engine.connect
+
+    def _guarded_engine_connect(self, *args, **kwargs):
+        host = self.url.host
+        if not _is_local(host):
+            raise RuntimeError(_NETWORK_BLOCKED.format(host=f"{host} (database)"))
+        return _real_engine_connect(self, *args, **kwargs)
+
+    monkeypatch.setattr(Engine, "connect", _guarded_engine_connect)
 
 
 def make_parcel(**overrides) -> dict:

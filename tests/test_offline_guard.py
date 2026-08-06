@@ -9,6 +9,7 @@ return unnoticed.
 import socket
 
 import pytest
+from sqlalchemy import text
 
 
 def test_remote_dns_is_blocked():
@@ -48,3 +49,37 @@ def test_the_opt_out_marker_restores_real_networking():
     """A test whose point IS the network can opt out. Asserted without actually going
     anywhere: the guard is simply not installed, so the real function is in place."""
     assert socket.getaddrinfo.__module__ != "tests.conftest"
+
+
+# --- the database, which used to slip through -------------------------------
+
+
+def test_a_real_database_call_is_blocked():
+    """The hole this closes: psycopg2 is a C extension and libpq opens its own socket
+    and resolves its own DNS below the Python `socket` module, so none of the patches
+    above ever saw a Postgres connection. An unmocked `SessionLocal()` reached Supabase
+    for real and merely looked like a slow test — putting the network back on the
+    critical path and letting an unmocked DB boundary pass silently.
+    """
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        with pytest.raises(RuntimeError, match="offline by design"):
+            db.execute(text("SELECT 1"))
+    finally:
+        db.close()
+
+
+def test_the_database_block_names_the_boundary():
+    """The message has to say what to mock, or it just looks like an outage."""
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        with pytest.raises(RuntimeError) as excinfo:
+            db.execute(text("SELECT 1"))
+    finally:
+        db.close()
+    assert "database" in str(excinfo.value)
+    assert "SessionLocal" in str(excinfo.value)
