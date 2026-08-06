@@ -156,6 +156,55 @@ def test_every_row_is_marked_as_demo_data(plan):
         assert row["tracking_number"].startswith(DEMO_TRACKING_PREFIX)
 
 
+# --- topping up a stale window ------------------------------------------------
+#
+# The window ends yesterday, so history ages out at a day per day and the right of the
+# chart goes empty. Re-running used to be unsafe, so nobody did; these pin the two
+# properties that make a plain re-run the intended habit instead.
+
+
+def test_days_already_covered_are_not_regenerated():
+    """The gap-filling property. Given the days an earlier run wrote, a new plan must
+    cover only what's missing — regenerating a covered day would double its volume and
+    silently inflate every per-day metric on the chart."""
+    already_have = {END - timedelta(days=offset) for offset in range(4, 15)}
+    plan = plan_history(days=14, seed=42, end_date=END, skip_dates=already_have)
+
+    assert set(plan["dates"]).isdisjoint(already_have)
+    assert set(plan["dates"]) == {END - timedelta(days=n) for n in (1, 2, 3)}
+    assert sorted(plan["skipped"]) == sorted(already_have)
+    assert len(plan["window"]) == 14, "the window is still 14 days; only the fill shrinks"
+
+
+def test_a_fully_covered_window_plans_nothing():
+    """Running it twice in a day must be a no-op, not a second helping."""
+    whole_window = {END - timedelta(days=offset) for offset in range(1, 15)}
+    plan = plan_history(days=14, seed=42, end_date=END, skip_dates=whole_window)
+
+    assert plan["dates"] == []
+    assert plan["interactions"] == []
+    assert plan["delivery_attempts"] == []
+
+
+def test_seq_start_continues_the_demo_numbering():
+    """A top-up must not reissue a tracking number the first run already used:
+    `delivery_attempts` is unique on (tracking_number, attempt_no), so a collision is an
+    IntegrityError mid-write, not a harmless duplicate."""
+    first = plan_history(days=7, seed=42, end_date=END)
+    # Same ceiling existing_demo_state() derives from the DB: every DEMO tracking
+    # number the first run put into play, from interactions and attempts alike.
+    issued = [i["tracking_number"] for i in first["interactions"]]
+    issued += [a["tracking_number"] for a in first["delivery_attempts"]]
+    highest = max(int(tn[len(DEMO_TRACKING_PREFIX):]) for tn in issued if tn)
+
+    top_up = plan_history(days=7, seed=7, end_date=END + timedelta(days=7),
+                          skip_dates=set(first["dates"]), seq_start=highest)
+
+    first_tracking = {i["tracking_number"] for i in first["interactions"]}
+    top_up_tracking = {i["tracking_number"] for i in top_up["interactions"]}
+    assert first_tracking.isdisjoint(top_up_tracking - {None})
+
+
 def test_messages_pair_inbound_with_a_reply(plan):
     """Every generated interaction leaves a two-sided thread, so the conversation pane
     has history for the backdated days too."""

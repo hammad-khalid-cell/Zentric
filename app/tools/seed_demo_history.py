@@ -25,14 +25,22 @@ nothing but insert. What the plan aims for:
   `DeliveryAttempt`, and later an `InterventionOutcome`, so the cases feed, the RTO
   metric, and the trend chart all describe the same events.
 
-    python -m app.tools.seed_demo_history                  # 14 days, seed 42
+**Re-running it is safe, and is the intended habit.** The window ends *yesterday*, so
+generated history goes stale at a day per day; left alone for a week, the right third of
+the trend chart is empty and reads as though the system stopped working. A plain run
+therefore fills only the days that are missing and continues the `DEMO` numbering past
+whatever exists — so run it before any demo rather than hoping the last run is still
+current.
+
+    python -m app.tools.seed_demo_history                  # fill any missing days (safe to repeat)
     python -m app.tools.seed_demo_history --days 21 --seed 7
     python -m app.tools.seed_demo_history --dry-run        # print the shape, write nothing
     python -m app.tools.seed_demo_history --wipe           # remove everything it wrote
+    python -m app.tools.seed_demo_history --wipe && python -m app.tools.seed_demo_history --fresh
 """
 import argparse
 import random
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.core import config
@@ -49,10 +57,10 @@ from app.models.message import Message
 DEMO_PHONE_PREFIX = "92300900"
 DEMO_TRACKING_PREFIX = "DEMO"
 
-# Deliberately wider than the dashboard's default 14-day window. History ends
+# Deliberately wider than the dashboard's default 14-day window: history ends
 # *yesterday*, so a 14-day generation is already missing its oldest bucket by the time
-# you look at it, and sheds another every day that passes. The extra days are slack so
-# the chart stays full without a regeneration on demo morning.
+# you look at it. The slack buys a few days of grace — the actual fix for staleness is
+# that a re-run tops up the gap rather than duplicating the window.
 DEFAULT_DAYS = 18
 DEFAULT_SEED = 42
 DEFAULT_MIN_PER_DAY = 6
@@ -112,29 +120,40 @@ def plan_history(days: int = DEFAULT_DAYS,
                  min_per_day: int = DEFAULT_MIN_PER_DAY,
                  max_per_day: int = DEFAULT_MAX_PER_DAY,
                  end_date: date | None = None,
-                 tz_name: str | None = None) -> dict:
+                 tz_name: str | None = None,
+                 skip_dates: set[date] | None = None,
+                 seq_start: int = 0) -> dict:
     """Build the full set of rows to insert, as plain dicts. Pure: same seed, same
     plan. Timestamps come back tz-aware in the business timezone — `write_plan` stores
     them as-is into `timestamptz` columns, so they bucket into exactly the local day
     they were generated for (see `compute_daily_series._local_date`).
+
+    `skip_dates` and `seq_start` are what make a top-up run safe. Days already holding
+    demo rows are left alone rather than doubled, and sequence numbering continues past
+    what exists so a second run can't reissue a `DEMO....` tracking number that
+    `delivery_attempts` already has under its unique `(tracking_number, attempt_no)`.
+    Both are plain arguments so this stays pure and DB-free — `existing_demo_state()`
+    is the impure half that supplies them.
     """
     rng = random.Random(seed)
     tz = ZoneInfo(tz_name or config.BUSINESS_HOURS_TIMEZONE)
     start_hour = config.BUSINESS_HOURS_START_HOUR
     end_hour = config.BUSINESS_HOURS_END_HOUR
+    skip_dates = skip_dates or set()
 
     if end_date is None:
         end_date = datetime.now(tz).date()
     # Oldest first, and excluding today: today belongs to the live demo traffic, and
     # overwriting it with synthetic rows would bury the run happening on screen.
-    bucket_dates = [end_date - timedelta(days=offset) for offset in range(days, 0, -1)]
+    window = [end_date - timedelta(days=offset) for offset in range(days, 0, -1)]
+    bucket_dates = [day for day in window if day not in skip_dates]
 
     interactions: list[dict] = []
     messages: list[dict] = []
     interventions: list[dict] = []
     attempts: list[dict] = []
     outcomes: list[dict] = []
-    seq = 0
+    seq = seq_start
 
     for day in bucket_dates:
         volume = rng.randint(min_per_day, max_per_day)
@@ -220,12 +239,62 @@ def plan_history(days: int = DEFAULT_DAYS,
 
     return {
         "dates": bucket_dates,
+        "window": window,
+        "skipped": [day for day in window if day in skip_dates],
         "interactions": interactions,
         "messages": messages,
         "interventions": interventions,
         "delivery_attempts": attempts,
         "intervention_outcomes": outcomes,
     }
+
+
+def existing_demo_state(tz_name: str | None = None) -> tuple[set[date], int]:
+    """Which local days already hold demo history, and the highest `DEMO` sequence in
+    use. The impure counterpart to `plan_history`'s `skip_dates` / `seq_start`.
+
+    Days are bucketed the same way the trend chart buckets them — local date in the
+    business timezone — so "this day is already covered" means the same thing here as
+    it does on the chart.
+    """
+    tz = ZoneInfo(tz_name or config.BUSINESS_HOURS_TIMEZONE)
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(Interaction.created_at, Interaction.tracking_number)
+            .filter(Interaction.customer_phone.like(f"{DEMO_PHONE_PREFIX}%"))
+            .all()
+        )
+        # delivery_attempts is the table with the unique (tracking_number, attempt_no)
+        # constraint, so it is scanned too rather than inferring the ceiling from
+        # interactions alone — an FAQ interaction carries no tracking number, so the
+        # highest sequence is not always visible from that side.
+        attempt_tracking = [
+            row[0] for row in
+            db.query(DeliveryAttempt.tracking_number)
+            .filter(DeliveryAttempt.tracking_number.like(f"{DEMO_TRACKING_PREFIX}%"))
+            .distinct()
+            .all()
+        ]
+    finally:
+        db.close()
+
+    def _seq_of(tracking_number: str | None) -> int:
+        if not tracking_number or not tracking_number.startswith(DEMO_TRACKING_PREFIX):
+            return 0
+        suffix = tracking_number[len(DEMO_TRACKING_PREFIX):]
+        return int(suffix) if suffix.isdigit() else 0
+
+    days: set[date] = set()
+    max_seq = 0
+    for created_at, tracking_number in rows:
+        at = created_at.replace(tzinfo=timezone.utc) if created_at.tzinfo is None else created_at
+        days.add(at.astimezone(tz).date())
+        max_seq = max(max_seq, _seq_of(tracking_number))
+    for tracking_number in attempt_tracking:
+        max_seq = max(max_seq, _seq_of(tracking_number))
+
+    return days, max_seq
 
 
 def write_plan(plan: dict) -> dict:
@@ -309,6 +378,10 @@ if __name__ == "__main__":
     parser.add_argument("--min-per-day", type=int, default=DEFAULT_MIN_PER_DAY)
     parser.add_argument("--max-per-day", type=int, default=DEFAULT_MAX_PER_DAY)
     parser.add_argument("--dry-run", action="store_true", help="Print the shape, write nothing")
+    parser.add_argument("--fresh", action="store_true",
+                        help="Plan the whole window instead of only the missing days. "
+                             "Expects an empty slate — pair it with --wipe, or it will "
+                             "duplicate days that already exist.")
     parser.add_argument("--wipe", action="store_true",
                         help="Delete previously generated demo history and exit")
     args = parser.parse_args()
@@ -318,10 +391,28 @@ if __name__ == "__main__":
         print("Removed demo history: " + ", ".join(f"{v} {k}" for k, v in removed.items()))
         raise SystemExit(0)
 
+    # Top up by default. The window always ends *yesterday*, so history generated once
+    # goes stale at a day per day — six days after a run the right third of the chart is
+    # empty and reads as though the system stopped working. Re-running used to be unsafe
+    # (duplicate days, and a reissued DEMO tracking number violating the unique
+    # `(tracking_number, attempt_no)` on delivery_attempts), which is why nobody did.
+    # Now it only fills the gap, so it is safe to run before any demo.
+    skip_dates, max_seq = ((set(), 0) if args.fresh else existing_demo_state())
+
     plan = plan_history(days=args.days, seed=args.seed,
-                        min_per_day=args.min_per_day, max_per_day=args.max_per_day)
-    print(f"Planned {len(plan['interactions'])} interactions across {args.days} days "
-          f"(seed {args.seed}):")
+                        min_per_day=args.min_per_day, max_per_day=args.max_per_day,
+                        skip_dates=skip_dates, seq_start=max_seq)
+
+    if plan["skipped"]:
+        print(f"{len(plan['skipped'])} of the last {args.days} days already have demo "
+              f"history — leaving them as they are.")
+
+    if not plan["dates"]:
+        print("Nothing to fill: the window is already covered.")
+        raise SystemExit(0)
+
+    print(f"Planned {len(plan['interactions'])} interactions across "
+          f"{len(plan['dates'])} day(s) (seed {args.seed}):")
     print(_summarise(plan))
 
     if args.dry_run:
